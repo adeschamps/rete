@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate log;
+
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicUsize, Ordering},
@@ -5,7 +8,7 @@ use std::{
 
 type SymbolID = usize;
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Wme([SymbolID; 3]);
 
 /// Generates unique identifiers.
@@ -50,6 +53,7 @@ pub struct Rete {
     id_generator: IdGenerator,
 }
 
+#[derive(Debug)]
 enum Activation {
     BetaLeft(ReteNodeId, TokenId),
     BetaRight(ReteNodeId, Wme),
@@ -95,6 +99,8 @@ impl Rete {
     }
 
     pub fn add_wme(&mut self, wme: Wme) {
+        trace!("add wme: {:?}", wme);
+
         let tests = [
             AlphaTest([None, None, None]),
             AlphaTest([None, None, Some(wme.0[2])]),
@@ -108,6 +114,7 @@ impl Rete {
 
         for test in &tests {
             if let Some(alpha_memory_id) = self.alpha_tests.get_mut(test) {
+                trace!("matched to {:?}", alpha_memory_id);
                 let alpha_memory = self.alpha_network.get_mut(alpha_memory_id).unwrap();
                 // Activate alpha memory
                 alpha_memory.wmes.push(wme);
@@ -127,6 +134,8 @@ impl Rete {
     }
 
     pub fn remove_wme(&mut self, wme: Wme) {
+        trace!("remove wme: {:?}", wme);
+
         let alpha_memories = self
             .wme_alpha_memories
             .remove(&wme)
@@ -154,10 +163,13 @@ impl Rete {
     }
 
     pub fn add_production(&mut self, production: Production) {
+        trace!("add production: {:?}", production);
+
         let mut current_node_id = self.dummy_node_id;
 
         for i in 0..production.conditions.len() {
             let condition = production.conditions[i];
+            trace!("add condition: {:?}", condition);
 
             // get join tests from condition
             // NOTE: This does not handle intra-condition tests.
@@ -197,13 +209,56 @@ impl Rete {
                     wmes: vec![],
                     successors: vec![],
                 };
+                trace!("created alpha memory {:?} => {:?}", alpha_test, memory.id);
+                self.alpha_tests.insert(alpha_test, memory.id);
                 self.alpha_network.insert(memory.id, memory);
                 // TODO: Activate new alpha memory with existing WMEs.
             }
             let alpha_memory = &self.alpha_network[&alpha_memory_id];
 
             // build or share join node
-            current_node_id = { unimplemented!() };
+            current_node_id = {
+                let shared_node = self.beta_network[&current_node_id]
+                    .children
+                    .iter()
+                    .filter_map(|id| self.beta_network.get(id))
+                    .filter(|node| match node.kind {
+                        ReteNodeKind::Join {
+                            alpha_memory: join_amem,
+                            tests: ref join_tests,
+                        } if join_amem == alpha_memory.id && *join_tests == tests => true,
+                        _ => false,
+                    })
+                    .next();
+                if let Some(shared_node) = shared_node {
+                    shared_node.id
+                } else {
+                    let new_node = ReteNode {
+                        id: ReteNodeId(self.id_generator.next()),
+                        parent: current_node_id,
+                        children: vec![],
+                        kind: ReteNodeKind::Join {
+                            alpha_memory: alpha_memory_id,
+                            tests,
+                        },
+                    };
+                    let id = new_node.id;
+                    self.beta_network.insert(new_node.id, new_node);
+                    // add to parent's children
+                    self.beta_network
+                        .get_mut(&current_node_id)
+                        .unwrap()
+                        .children
+                        .push(id);
+                    // link to alpha memory
+                    self.alpha_network
+                        .get_mut(&alpha_memory_id)
+                        .unwrap()
+                        .successors
+                        .push(id);
+                    id
+                }
+            };
 
             // build or share beta memory
             // TODO: Skip on last iteration?
@@ -241,6 +296,8 @@ impl Rete {
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
+        trace!("remove production: {:?}", id);
+
         self.productions.remove(&id);
         unimplemented!()
     }
@@ -251,7 +308,9 @@ impl Rete {
     }
 
     fn activate_memories(&mut self) {
+        trace!("activate memories");
         while let Some(activation) = self.pending_activations.pop() {
+            trace!("activating: {:?}", activation);
             let mut new_tokens = vec![];
             match activation {
                 Activation::BetaLeft(beta_node_id, token) => {
@@ -262,6 +321,7 @@ impl Rete {
                             alpha_memory,
                             tests,
                         } => {
+                            trace!("activating a join node");
                             let mut new_activations = vec![];
                             let alpha_memory = &self.alpha_network[alpha_memory];
                             let token = &self.tokens[&token];
@@ -294,6 +354,7 @@ impl Rete {
                             alpha_memory,
                             tests,
                         } => {
+                            trace!(" -- a join node for {:?}", alpha_memory);
                             let beta_node = &self.beta_network[&node.parent];
                             let tokens = match beta_node.kind {
                                 ReteNodeKind::Beta { ref tokens } => tokens,
@@ -347,10 +408,10 @@ impl Rete {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct AlphaTest([Option<SymbolID>; 3]);
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct AlphaMemoryId(usize);
 
 struct AlphaMemory {
@@ -362,7 +423,7 @@ struct AlphaMemory {
 
 //////////
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ReteNodeId(usize);
 
 struct ReteNode {
@@ -385,6 +446,7 @@ enum ReteNodeKind {
     },
 }
 
+#[derive(PartialEq)]
 struct JoinNodeTest {
     // These two should be able to fit in a single byte.
     alpha_field: usize,
@@ -393,7 +455,7 @@ struct JoinNodeTest {
     beta_condition_offset: usize,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TokenId(usize);
 
 #[derive(Clone, Copy)]
@@ -407,21 +469,22 @@ struct Token {
 
 //////////
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProductionID(usize);
 
+#[derive(Debug)]
 pub struct Production {
     id: ProductionID,
     conditions: Vec<Condition>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Condition([ConditionTest; 3]);
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct VariableID(usize);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ConditionTest {
     Constant(SymbolID),
     Variable(VariableID),
@@ -464,6 +527,10 @@ impl From<ConditionTest> for Option<SymbolID> {
 mod tests {
     use super::*;
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn empty_rete() {
         let rete = Rete::new();
@@ -502,6 +569,7 @@ mod tests {
     }
 
     mod blocks {
+        use super::*;
         use crate::*;
 
         pub const B1: usize = 1;
@@ -586,10 +654,16 @@ mod tests {
             for p in productions() {
                 rete.add_production(p);
             }
+
+            assert_eq!(rete.alpha_tests.len(), 5);
+            assert_eq!(rete.alpha_network.len(), 5);
+            assert_eq!(rete.beta_network.len(), 13);
         }
 
         #[test]
         fn add_productions_and_wmes() {
+            init();
+
             let mut rete = Rete::default();
             for p in productions() {
                 rete.add_production(p);
