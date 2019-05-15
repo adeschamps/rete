@@ -154,9 +154,90 @@ impl Rete {
     }
 
     pub fn add_production(&mut self, production: Production) {
-        let mut current_node = self.dummy_node_id;
+        let mut current_node_id = self.dummy_node_id;
 
-        unimplemented!()
+        for i in 0..production.conditions.len() {
+            let condition = production.conditions[i];
+
+            // get join tests from condition
+            // NOTE: This does not handle intra-condition tests.
+            let tests: Vec<JoinNodeTest> = condition
+                .variables()
+                .filter_map(|(alpha_field, variable_id)| {
+                    production.conditions[0..i]
+                        .iter()
+                        .rev()
+                        .enumerate()
+                        .find_map(|(distance, prev_condition)| {
+                            prev_condition
+                                .variables()
+                                .find(|(_, var)| *var == variable_id)
+                                .map(|(i, _)| (i, distance))
+                        })
+                        .map(|(beta_field, beta_condition_offset)| JoinNodeTest {
+                            alpha_field,
+                            beta_field,
+                            beta_condition_offset,
+                        })
+                })
+                .collect();
+
+            // build or share alpha memory
+            let alpha_test = AlphaTest::from(condition);
+            // Returns either an existing id or generate a new one.
+            let alpha_memory_id = self
+                .alpha_tests
+                .get(&alpha_test)
+                .cloned()
+                .unwrap_or_else(|| AlphaMemoryId(self.id_generator.next()));
+            // If we need a new alpha memory, create it.
+            if !self.alpha_network.contains_key(&alpha_memory_id) {
+                let memory = AlphaMemory {
+                    id: alpha_memory_id,
+                    wmes: vec![],
+                    successors: vec![],
+                };
+                self.alpha_network.insert(memory.id, memory);
+                // TODO: Activate new alpha memory with existing WMEs.
+            }
+            let alpha_memory = &self.alpha_network[&alpha_memory_id];
+
+            // build or share join node
+            current_node_id = { unimplemented!() };
+
+            // build or share beta memory
+            // TODO: Skip on last iteration?
+            current_node_id = {
+                let shared_node = self.beta_network[&current_node_id]
+                    .children
+                    .iter()
+                    .filter_map(|id| self.beta_network.get(id))
+                    .filter(|node| match node.kind {
+                        ReteNodeKind::Beta { .. } => true,
+                        _ => false,
+                    })
+                    .next();
+                if let Some(shared_node) = shared_node {
+                    shared_node.id
+                } else {
+                    let new_node = ReteNode {
+                        id: ReteNodeId(self.id_generator.next()),
+                        parent: current_node_id,
+                        children: vec![],
+                        kind: ReteNodeKind::Beta { tokens: vec![] },
+                    };
+                    let id = new_node.id;
+                    self.beta_network.insert(new_node.id, new_node);
+                    // add to parent's children
+                    self.beta_network
+                        .get_mut(&current_node_id)
+                        .unwrap()
+                        .children
+                        .push(id);
+                    id
+                }
+            };
+        }
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
@@ -274,9 +355,12 @@ struct AlphaMemoryId(usize);
 
 struct AlphaMemory {
     id: AlphaMemoryId,
+    // Also called `items` in the Doorenbos thesis.
     wmes: Vec<Wme>,
     successors: Vec<ReteNodeId>,
 }
+
+//////////
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 struct ReteNodeId(usize);
@@ -331,14 +415,49 @@ pub struct Production {
     conditions: Vec<Condition>,
 }
 
+#[derive(Clone, Copy)]
 struct Condition([ConditionTest; 3]);
 
 #[derive(Clone, Copy, PartialEq)]
 struct VariableID(usize);
 
+#[derive(Clone, Copy)]
 enum ConditionTest {
     Constant(SymbolID),
     Variable(VariableID),
+}
+
+impl Condition {
+    /// Returns an iterator over only the variable tests, along with
+    /// their indices.
+    fn variables(&self) -> impl Iterator<Item = (usize, VariableID)> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, test)| match test {
+                ConditionTest::Variable(id) => Some((i, *id)),
+                ConditionTest::Constant(_) => None,
+            })
+    }
+}
+
+impl From<Condition> for AlphaTest {
+    fn from(condition: Condition) -> AlphaTest {
+        AlphaTest([
+            condition.0[0].into(),
+            condition.0[1].into(),
+            condition.0[2].into(),
+        ])
+    }
+}
+
+impl From<ConditionTest> for Option<SymbolID> {
+    fn from(test: ConditionTest) -> Option<SymbolID> {
+        match test {
+            ConditionTest::Constant(id) => Some(id),
+            ConditionTest::Variable(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]
