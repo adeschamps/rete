@@ -20,11 +20,11 @@ impl IdGenerator {
     }
 }
 
-#[derive(Default)]
 pub struct Rete {
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
     beta_network: HashMap<ReteNodeId, ReteNode>,
+    dummy_node_id: ReteNodeId,
     tokens: HashMap<TokenId, Token>,
 
     productions: HashMap<ProductionID, Production>,
@@ -55,22 +55,43 @@ enum Activation {
     BetaRight(ReteNodeId, Wme),
 }
 
+impl Default for Rete {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Rete {
     /// TODO: The Default impl is no longer correct because it doesn't
     /// create the initial beta node.
-    fn new() -> Self {
-        let mut rete = Self::default();
+    pub fn new() -> Self {
+        let id_generator = IdGenerator::default();
 
         // Since the parent is generated instead of acquired from
         // another node, it is a *dangling pointer*.
         let dummy_node = ReteNode {
-            id: ReteNodeId(rete.id_generator.next()),
-            parent: ReteNodeId(rete.id_generator.next()),
+            id: ReteNodeId(id_generator.next()),
+            parent: ReteNodeId(id_generator.next()),
             children: vec![],
             kind: ReteNodeKind::Beta { tokens: vec![] },
         };
-        rete.beta_network.insert(dummy_node.id, dummy_node);
-        rete
+        let dummy_node_id = dummy_node.id;
+        let mut beta_network = HashMap::new();
+        beta_network.insert(dummy_node.id, dummy_node);
+
+        Rete {
+            alpha_tests: HashMap::new(),
+            alpha_network: HashMap::new(),
+            beta_network,
+            dummy_node_id,
+            tokens: HashMap::new(),
+            productions: HashMap::new(),
+            wme_alpha_memories: HashMap::new(),
+            wme_tokens: HashMap::new(),
+            token_children: HashMap::new(),
+            pending_activations: Vec::new(),
+            id_generator,
+        }
     }
 
     pub fn add_wme(&mut self, wme: Wme) {
@@ -133,7 +154,8 @@ impl Rete {
     }
 
     pub fn add_production(&mut self, production: Production) {
-        self.productions.insert(production.id, production);
+        let mut current_node = self.dummy_node_id;
+
         unimplemented!()
     }
 
@@ -309,7 +331,15 @@ pub struct Production {
     conditions: Vec<Condition>,
 }
 
-struct Condition;
+struct Condition([ConditionTest; 3]);
+
+#[derive(Clone, Copy, PartialEq)]
+struct VariableID(usize);
+
+enum ConditionTest {
+    Constant(SymbolID),
+    Variable(VariableID),
+}
 
 #[cfg(test)]
 mod tests {
@@ -360,39 +390,109 @@ mod tests {
         pub const B3: usize = 3;
         pub const B4: usize = 4;
 
-        pub const on: usize = 10;
-        pub const color: usize = 11;
-        pub const left_of: usize = 12;
+        pub const ON: usize = 10;
+        pub const COLOR: usize = 11;
+        pub const LEFT_OF: usize = 12;
 
-        pub const red: usize = 20;
-        pub const maize: usize = 21;
-        pub const green: usize = 22;
-        pub const blue: usize = 23;
-        pub const white: usize = 24;
-        pub const table: usize = 25;
+        pub const RED: usize = 20;
+        pub const MAIZE: usize = 21;
+        pub const GREEN: usize = 22;
+        pub const BLUE: usize = 23;
+        pub const WHITE: usize = 24;
+        pub const TABLE: usize = 25;
 
-        pub const w1: Wme = Wme([B1, on, B2]);
-        pub const w2: Wme = Wme([B1, on, B3]);
-        pub const w3: Wme = Wme([B1, color, red]);
-        pub const w4: Wme = Wme([B2, on, table]);
-        pub const w5: Wme = Wme([B2, left_of, B3]);
-        pub const w6: Wme = Wme([B2, color, blue]);
-        pub const w7: Wme = Wme([B3, left_of, B4]);
-        pub const w8: Wme = Wme([B3, on, table]);
-        pub const w9: Wme = Wme([B3, color, red]);
+        pub const W1: Wme = Wme([B1, ON, B2]);
+        pub const W2: Wme = Wme([B1, ON, B3]);
+        pub const W3: Wme = Wme([B1, COLOR, RED]);
+        pub const W4: Wme = Wme([B2, ON, TABLE]);
+        pub const W5: Wme = Wme([B2, LEFT_OF, B3]);
+        pub const W6: Wme = Wme([B2, COLOR, BLUE]);
+        pub const W7: Wme = Wme([B3, LEFT_OF, B4]);
+        pub const W8: Wme = Wme([B3, ON, TABLE]);
+        pub const W9: Wme = Wme([B3, COLOR, RED]);
         fn wmes() -> Vec<Wme> {
-            vec![w1, w2, w3, w4, w5, w6, w7, w8, w9]
+            vec![W1, W2, W3, W4, W5, W6, W7, W8, W9]
         }
 
-        const t1: AlphaTest = AlphaTest([None, Some(on), None]);
-        const t2: AlphaTest = AlphaTest([None, Some(left_of), None]);
-        const t3: AlphaTest = AlphaTest([None, Some(color), Some(red)]);
-        const t4: AlphaTest = AlphaTest([None, Some(color), Some(maize)]);
-        const t5: AlphaTest = AlphaTest([None, Some(color), Some(blue)]);
-        const t6: AlphaTest = AlphaTest([None, Some(color), Some(green)]);
-        const t7: AlphaTest = AlphaTest([None, Some(color), Some(white)]);
-        const t8: AlphaTest = AlphaTest([None, Some(on), Some(table)]);
-        const t9: AlphaTest = AlphaTest([None, None, None]);
-        const t10: AlphaTest = AlphaTest([None, Some(left_of), None]);
+        const V_X: ConditionTest = ConditionTest::Variable(VariableID(0));
+        const V_Y: ConditionTest = ConditionTest::Variable(VariableID(1));
+        const V_Z: ConditionTest = ConditionTest::Variable(VariableID(2));
+        const V_A: ConditionTest = ConditionTest::Variable(VariableID(3));
+        const V_B: ConditionTest = ConditionTest::Variable(VariableID(4));
+        const V_C: ConditionTest = ConditionTest::Variable(VariableID(5));
+        const V_D: ConditionTest = ConditionTest::Variable(VariableID(6));
+        const V_S: ConditionTest = ConditionTest::Variable(VariableID(7));
+
+        const C_ON: ConditionTest = ConditionTest::Constant(ON);
+        const C_LEFT_OF: ConditionTest = ConditionTest::Constant(LEFT_OF);
+        const C_COLOR: ConditionTest = ConditionTest::Constant(COLOR);
+        const C_RED: ConditionTest = ConditionTest::Constant(RED);
+        const C_MAIZE: ConditionTest = ConditionTest::Constant(MAIZE);
+        const C_BLUE: ConditionTest = ConditionTest::Constant(BLUE);
+        const C_GREEN: ConditionTest = ConditionTest::Constant(GREEN);
+        const C_WHITE: ConditionTest = ConditionTest::Constant(WHITE);
+        const C_TABLE: ConditionTest = ConditionTest::Constant(TABLE);
+
+        const C1: Condition = Condition([V_X, C_ON, V_Y]);
+        const C2: Condition = Condition([V_Y, C_LEFT_OF, V_Z]);
+        const C3: Condition = Condition([V_Z, C_COLOR, C_RED]);
+        const C4: Condition = Condition([V_A, C_COLOR, C_MAIZE]);
+        const C5: Condition = Condition([V_B, C_COLOR, C_BLUE]);
+        const C6: Condition = Condition([V_C, C_COLOR, C_GREEN]);
+        const C7: Condition = Condition([V_D, C_COLOR, C_WHITE]);
+        const C8: Condition = Condition([V_S, C_ON, C_TABLE]);
+        const C9: Condition = Condition([V_Y, V_A, V_B]);
+        const C10: Condition = Condition([V_A, C_LEFT_OF, V_D]);
+
+        fn productions() -> Vec<Production> {
+            vec![
+                Production {
+                    id: ProductionID(1),
+                    conditions: vec![C1, C2, C3],
+                },
+                Production {
+                    id: ProductionID(2),
+                    conditions: vec![C1, C2, C4, C5],
+                },
+                Production {
+                    id: ProductionID(3),
+                    conditions: vec![C1, C2, C4, C3],
+                },
+            ]
+        }
+
+        #[test]
+        fn add_productions() {
+            let mut rete = Rete::default();
+            for p in productions() {
+                rete.add_production(p);
+            }
+        }
+
+        #[test]
+        fn add_productions_and_wmes() {
+            let mut rete = Rete::default();
+            for p in productions() {
+                rete.add_production(p);
+            }
+            for wme in wmes() {
+                rete.add_wme(wme);
+            }
+
+            unimplemented!("check matches")
+        }
+
+        #[test]
+        fn add_wmes_then_productions() {
+            let mut rete = Rete::default();
+            for wme in wmes() {
+                rete.add_wme(wme);
+            }
+            for p in productions() {
+                rete.add_production(p);
+            }
+
+            unimplemented!("check matches")
+        }
     }
 }
