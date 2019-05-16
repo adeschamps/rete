@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate slog;
 
+use petgraph::{graph::NodeIndex, Directed, Graph};
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
@@ -29,6 +30,7 @@ pub struct Rete {
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
     beta_network: HashMap<ReteNodeId, ReteNode>,
+    // beta_graph: Graph<ReteNode, (), Directed, ReteNodeId>,
     dummy_node_id: ReteNodeId,
     tokens: HashMap<TokenId, Token>,
 
@@ -89,11 +91,14 @@ impl Rete {
         let mut beta_network = HashMap::new();
         beta_network.insert(dummy_node.id, dummy_node);
 
+        // let beta_graph = Graph::with_capacity(100, 100);
+
         Rete {
             log,
             alpha_tests: HashMap::new(),
             alpha_network: HashMap::new(),
             beta_network,
+            // beta_graph,
             dummy_node_id,
             tokens: HashMap::new(),
             productions: HashMap::new(),
@@ -278,7 +283,7 @@ impl Rete {
 
             // build or share beta memory
             // TODO: Skip on last iteration?
-            current_node_id = {
+            current_node_id = if i + 1 < production.conditions.len() {
                 let shared_node = self.beta_network[&current_node_id]
                     .children
                     .iter()
@@ -307,6 +312,8 @@ impl Rete {
                         .push(id);
                     id
                 }
+            } else {
+                current_node_id
             };
         }
 
@@ -444,6 +451,56 @@ impl Rete {
 
         wme.0[test.alpha_field] == other_wme.0[test.beta_field]
     }
+
+    fn network_graph(&self) -> Graph<String, ()> {
+        let mut graph = Graph::new();
+        let mut alpha_indices = HashMap::new();
+        let mut indices = HashMap::new();
+
+        for (test, id) in &self.alpha_tests {
+            let node = &self.alpha_network[id];
+            let value = format!(
+                "{:?}\ntest: {:?}\nwmes: {}",
+                node.id,
+                test.0,
+                node.wmes.len()
+            );
+            let index = graph.add_node(value);
+            alpha_indices.insert(id, index);
+        }
+
+        for (id, node) in &self.beta_network {
+            let value = format!(
+                "id: {}\nchildren: {:?}\nkind: {}",
+                node.id.0,
+                node.children.iter().map(|id| id.0).collect::<Vec<usize>>(),
+                match node.kind {
+                    ReteNodeKind::Beta { ref tokens, .. } => format!("beta - {} tokens", tokens.len()),
+                    ReteNodeKind::Join { .. } => format!("join"),
+                    ReteNodeKind::P { production } => format!("p: {:?}", production),
+                }
+            );
+            let index = graph.add_node(value);
+            indices.insert(id, index);
+        }
+
+        for node in self.alpha_network.values() {
+            let alpha_index = alpha_indices[&node.id];
+            for successor in &node.successors {
+                let successor_index = indices[successor];
+                graph.add_edge(alpha_index, successor_index, ());
+            }
+        }
+
+        for node in self.beta_network.values() {
+            let index = indices[&node.id];
+            for child in &node.children {
+                let child_index = indices[&child];
+                graph.add_edge(index, child_index, ());
+            }
+        }
+        graph
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -461,9 +518,22 @@ struct AlphaMemory {
 
 //////////
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct ReteNodeId(usize);
 
+unsafe impl petgraph::graph::IndexType for ReteNodeId {
+    fn new(x: usize) -> Self {
+        ReteNodeId(x)
+    }
+    fn index(&self) -> usize {
+        self.0
+    }
+    fn max() -> Self {
+        Self::new(<usize as petgraph::graph::IndexType>::max())
+    }
+}
+
+#[derive(Debug)]
 struct ReteNode {
     id: ReteNodeId,
     children: Vec<ReteNodeId>,
@@ -471,6 +541,7 @@ struct ReteNode {
     kind: ReteNodeKind,
 }
 
+#[derive(Debug)]
 enum ReteNodeKind {
     Beta {
         tokens: Vec<TokenId>,
@@ -484,7 +555,7 @@ enum ReteNodeKind {
     },
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 struct JoinNodeTest {
     // These two should be able to fit in a single byte.
     alpha_field: usize,
@@ -695,7 +766,7 @@ mod tests {
 
             assert_eq!(rete.alpha_tests.len(), 5);
             assert_eq!(rete.alpha_network.len(), 5);
-            assert_eq!(rete.beta_network.len(), 16);
+            assert_eq!(rete.beta_network.len(), 13);
         }
 
         #[test]
@@ -706,9 +777,14 @@ mod tests {
             for p in productions() {
                 rete.add_production(p);
             }
+
             for wme in wmes() {
                 rete.add_wme(wme);
             }
+
+            let graph = rete.network_graph();
+            let buffer = format!("{:?}", petgraph::dot::Dot::new(&graph));
+            std::fs::write("graph.dot", buffer).ok();
 
             unimplemented!("check matches")
         }
