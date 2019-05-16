@@ -5,7 +5,8 @@ authors = ["Anthony Deschamps <anthony.j.deschamps@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-log = "0.4.6"
+slog = { version = "2.4.1", features = ["max_level_trace", "nested-values"] }
+slog-stdlog = "3.0.2"
 
 [dev-dependencies]
 env_logger = "0.6.1"

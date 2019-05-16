@@ -1,6 +1,7 @@
 #[macro_use]
-extern crate log;
+extern crate slog;
 
+use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicUsize, Ordering},
@@ -24,6 +25,7 @@ impl IdGenerator {
 }
 
 pub struct Rete {
+    log: Logger,
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
     beta_network: HashMap<ReteNodeId, ReteNode>,
@@ -69,6 +71,10 @@ impl Rete {
     /// TODO: The Default impl is no longer correct because it doesn't
     /// create the initial beta node.
     pub fn new() -> Self {
+        let drain = slog_stdlog::StdLog;
+        let log = Logger::root(drain.fuse(), o!());
+        info!(log, "constructing rete");
+
         let id_generator = IdGenerator::default();
 
         // Since the parent is generated instead of acquired from
@@ -84,6 +90,7 @@ impl Rete {
         beta_network.insert(dummy_node.id, dummy_node);
 
         Rete {
+            log,
             alpha_tests: HashMap::new(),
             alpha_network: HashMap::new(),
             beta_network,
@@ -99,7 +106,8 @@ impl Rete {
     }
 
     pub fn add_wme(&mut self, wme: Wme) {
-        trace!("add wme: {:?}", wme);
+        let log = self.log.new(o!("wme" => format!("{:?}", wme)));
+        trace!(log, "add wme");
 
         let tests = [
             AlphaTest([None, None, None]),
@@ -114,7 +122,8 @@ impl Rete {
 
         for test in &tests {
             if let Some(alpha_memory_id) = self.alpha_tests.get_mut(test) {
-                trace!("matched to {:?}", alpha_memory_id);
+                let log = log.new(o!("alpha" => alpha_memory_id.0));
+                trace!(log, "matched");
                 let alpha_memory = self.alpha_network.get_mut(alpha_memory_id).unwrap();
                 // Activate alpha memory
                 alpha_memory.wmes.push(wme);
@@ -130,11 +139,12 @@ impl Rete {
             }
         }
 
-        self.activate_memories();
+        self.activate_memories(log);
     }
 
     pub fn remove_wme(&mut self, wme: Wme) {
-        trace!("remove wme: {:?}", wme);
+        let log = self.log.new(o!("wme" => format!("{:?}", wme)));
+        trace!(log, "remove wme");
 
         let alpha_memories = self
             .wme_alpha_memories
@@ -163,13 +173,14 @@ impl Rete {
     }
 
     pub fn add_production(&mut self, production: Production) {
-        trace!("add production: {:?}", production);
+        let log = self.log.new(o!("production_id" => production.id.0));
+        trace!(log, "add production"; "production" => ?production);
 
         let mut current_node_id = self.dummy_node_id;
 
         for i in 0..production.conditions.len() {
             let condition = production.conditions[i];
-            trace!("add condition: {:?}", condition);
+            trace!(log, "add condition"; "condition" => ?condition);
 
             // get join tests from condition
             // NOTE: This does not handle intra-condition tests.
@@ -209,7 +220,12 @@ impl Rete {
                     wmes: vec![],
                     successors: vec![],
                 };
-                trace!("created alpha memory {:?} => {:?}", alpha_test, memory.id);
+                trace!(
+                    log,
+                    "created alpha memory {:?} => {:?}",
+                    alpha_test,
+                    memory.id
+                );
                 self.alpha_tests.insert(alpha_test, memory.id);
                 self.alpha_network.insert(memory.id, memory);
                 // TODO: Activate new alpha memory with existing WMEs.
@@ -293,10 +309,30 @@ impl Rete {
                 }
             };
         }
+
+        // Build new production node
+        let new_node = ReteNode {
+            id: ReteNodeId(self.id_generator.next()),
+            children: vec![],
+            parent: current_node_id,
+            kind: ReteNodeKind::P {
+                production: production.id,
+            },
+        };
+        self.beta_network
+            .get_mut(&current_node_id)
+            .unwrap()
+            .children
+            .push(new_node.id);
+        trace!(log, "new p node"; "id" => ?new_node.id);
+        self.beta_network.insert(new_node.id, new_node);
+
+        // TODO: update new node with existing matches
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
-        trace!("remove production: {:?}", id);
+        let log = self.log.clone();
+        trace!(log, "remove production: {:?}", id);
 
         self.productions.remove(&id);
         unimplemented!()
@@ -307,10 +343,11 @@ impl Rete {
         self.alpha_network.insert(alpha_memory.id, alpha_memory);
     }
 
-    fn activate_memories(&mut self) {
-        trace!("activate memories");
+    fn activate_memories(&mut self, log: Logger) {
+        trace!(log, "activate memories");
         while let Some(activation) = self.pending_activations.pop() {
-            trace!("activating: {:?}", activation);
+            let log = log.new(o!("activation" => format!("{:?}", activation)));
+            trace!(log, "activating");
             let mut new_tokens = vec![];
             match activation {
                 Activation::BetaLeft(beta_node_id, token) => {
@@ -321,7 +358,7 @@ impl Rete {
                             alpha_memory,
                             tests,
                         } => {
-                            trace!("activating a join node");
+                            trace!(log, "activating a join node");
                             let mut new_activations = vec![];
                             let alpha_memory = &self.alpha_network[alpha_memory];
                             let token = &self.tokens[&token];
@@ -354,7 +391,8 @@ impl Rete {
                             alpha_memory,
                             tests,
                         } => {
-                            trace!(" -- a join node for {:?}", alpha_memory);
+                            let log = log.new(o!("alpha" => alpha_memory.0));
+                            trace!(log, "a join node");
                             let beta_node = &self.beta_network[&node.parent];
                             let tokens = match beta_node.kind {
                                 ReteNodeKind::Beta { ref tokens } => tokens,
@@ -657,7 +695,7 @@ mod tests {
 
             assert_eq!(rete.alpha_tests.len(), 5);
             assert_eq!(rete.alpha_network.len(), 5);
-            assert_eq!(rete.beta_network.len(), 13);
+            assert_eq!(rete.beta_network.len(), 16);
         }
 
         #[test]
@@ -677,6 +715,8 @@ mod tests {
 
         #[test]
         fn add_wmes_then_productions() {
+            init();
+
             let mut rete = Rete::default();
             for wme in wmes() {
                 rete.add_wme(wme);
