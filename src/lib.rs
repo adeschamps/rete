@@ -1,7 +1,8 @@
 #[macro_use]
 extern crate slog;
 
-use petgraph::{graph::NodeIndex, Directed, Graph};
+#[cfg(test)]
+use petgraph::Graph;
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
@@ -58,9 +59,15 @@ pub struct Rete {
 }
 
 #[derive(Debug)]
-enum Activation {
-    BetaLeft(ReteNodeId, TokenId),
-    BetaRight(ReteNodeId, Wme),
+struct Activation {
+    node: ReteNodeId,
+    kind: ActivationKind,
+}
+
+#[derive(Debug)]
+enum ActivationKind {
+    Left(TokenId),
+    Right(Wme),
 }
 
 impl Default for Rete {
@@ -81,15 +88,26 @@ impl Rete {
 
         // Since the parent is generated instead of acquired from
         // another node, it is a *dangling pointer*.
+        let id = ReteNodeId(id_generator.next());
+        let dummy_token = Token {
+            id: TokenId(id_generator.next()),
+            parent: TokenId(id_generator.next()),
+            wme: Wme([0, 0, 0]),
+            node: id,
+        };
         let dummy_node = ReteNode {
-            id: ReteNodeId(id_generator.next()),
+            id,
             parent: ReteNodeId(id_generator.next()),
             children: vec![],
-            kind: ReteNodeKind::Beta { tokens: vec![] },
+            kind: ReteNodeKind::Beta {
+                tokens: vec![dummy_token.id],
+            },
         };
         let dummy_node_id = dummy_node.id;
         let mut beta_network = HashMap::new();
         beta_network.insert(dummy_node.id, dummy_node);
+        let mut tokens = HashMap::new();
+        tokens.insert(dummy_token.id, dummy_token);
 
         // let beta_graph = Graph::with_capacity(100, 100);
 
@@ -100,7 +118,7 @@ impl Rete {
             beta_network,
             // beta_graph,
             dummy_node_id,
-            tokens: HashMap::new(),
+            tokens,
             productions: HashMap::new(),
             wme_alpha_memories: HashMap::new(),
             wme_tokens: HashMap::new(),
@@ -126,21 +144,27 @@ impl Rete {
         ];
 
         for test in &tests {
-            if let Some(alpha_memory_id) = self.alpha_tests.get_mut(test) {
-                let log = log.new(o!("alpha" => alpha_memory_id.0));
-                trace!(log, "matched");
-                let alpha_memory = self.alpha_network.get_mut(alpha_memory_id).unwrap();
-                // Activate alpha memory
-                alpha_memory.wmes.push(wme);
-                self.wme_alpha_memories
-                    .entry(wme)
-                    .or_default()
-                    .push(alpha_memory.id);
-                for join_node_id in &alpha_memory.successors {
-                    // right activate join node
-                    self.pending_activations
-                        .push(Activation::BetaRight(*join_node_id, wme));
-                }
+            let alpha_memory_id = match self.alpha_tests.get(test) {
+                Some(id) => id,
+                None => continue,
+            };
+            let alpha_memory = self.alpha_network.get_mut(alpha_memory_id).unwrap();
+
+            let log = log.new(o!("alpha" => alpha_memory.id.0));
+            trace!(log, "matched");
+
+            // Activate alpha memory
+            alpha_memory.wmes.push(wme);
+            self.wme_alpha_memories
+                .entry(wme)
+                .or_default()
+                .push(alpha_memory.id);
+            for join_node_id in &alpha_memory.successors {
+                // right activate join node
+                self.pending_activations.push(Activation {
+                    node: *join_node_id,
+                    kind: ActivationKind::Right(wme),
+                });
             }
         }
 
@@ -345,101 +369,126 @@ impl Rete {
         unimplemented!()
     }
 
-    fn add_alpha_memory(&mut self, test: AlphaTest, alpha_memory: AlphaMemory) {
-        self.alpha_tests.insert(test, alpha_memory.id);
-        self.alpha_network.insert(alpha_memory.id, alpha_memory);
-    }
-
     fn activate_memories(&mut self, log: Logger) {
         trace!(log, "activate memories");
         while let Some(activation) = self.pending_activations.pop() {
             let log = log.new(o!("activation" => format!("{:?}", activation)));
+            let node = &self.beta_network[&activation.node];
             trace!(log, "activating");
             let mut new_tokens = vec![];
-            match activation {
-                Activation::BetaLeft(beta_node_id, token) => {
-                    let node = &self.beta_network[&beta_node_id];
-                    match &node.kind {
-                        ReteNodeKind::Beta { tokens } => unimplemented!(),
-                        ReteNodeKind::Join {
-                            alpha_memory,
-                            tests,
-                        } => {
-                            trace!(log, "activating a join node");
-                            let mut new_activations = vec![];
-                            let alpha_memory = &self.alpha_network[alpha_memory];
-                            let token = &self.tokens[&token];
-                            for wme in alpha_memory.wmes.iter().filter(|wme| {
-                                tests.iter().all(|test| self.join_test(test, token, wme))
-                            }) {
-                                let new_token = Token {
-                                    id: TokenId(self.id_generator.next()),
-                                    parent: token.id,
-                                    node: node.id,
-                                    wme: *wme,
-                                };
-                                new_tokens.push(new_token);
-                                new_activations.extend(
-                                    node.children
-                                        .iter()
-                                        .map(|id| Activation::BetaLeft(*id, new_token.id)),
-                                );
-                            }
-                            self.pending_activations.extend(new_activations);
-                        }
-                        ReteNodeKind::P { .. } => unimplemented!(),
-                    }
+            match (activation.kind, &node.kind) {
+                (ActivationKind::Left(token), ReteNodeKind::Beta { tokens }) => {
+                    let token = self.tokens[&token];
+                    let new_token = Token {
+                        id: TokenId(self.id_generator.next()),
+                        parent: token.id,
+                        wme: token.wme,
+                        node: node.id,
+                    };
+                    // tokens.insert(0, new_token.id);
+                    new_tokens.push(new_token);
+                    let new_activations: Vec<_> = node
+                        .children
+                        .iter()
+                        .map(|id| &self.beta_network[id])
+                        .map(|child| Activation {
+                            node: child.id,
+                            kind: ActivationKind::Left(new_token.id),
+                        })
+                        .collect();
+                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    self.pending_activations.extend(new_activations);
                 }
-                Activation::BetaRight(beta_node_id, wme) => {
-                    let node = &self.beta_network[&beta_node_id];
-                    match &node.kind {
-                        ReteNodeKind::Beta { .. } => unimplemented!(),
-                        ReteNodeKind::Join {
-                            alpha_memory,
-                            tests,
-                        } => {
-                            let log = log.new(o!("alpha" => alpha_memory.0));
-                            trace!(log, "a join node");
-                            let beta_node = &self.beta_network[&node.parent];
-                            let tokens = match beta_node.kind {
-                                ReteNodeKind::Beta { ref tokens } => tokens,
-                                _ => unreachable!(),
-                            };
-                            let new_activations: Vec<_> = tokens
-                                .iter()
-                                .filter_map(|token| self.tokens.get(token))
-                                .filter(|token| {
-                                    tests.iter().all(|test| self.join_test(test, token, &wme))
-                                })
-                                .flat_map(|token| {
-                                    node.children
-                                        .iter()
-                                        .map(move |id| Activation::BetaLeft(*id, token.id))
-                                })
-                                .collect();
-                            self.pending_activations.extend(new_activations);
-                        }
-                        ReteNodeKind::P { .. } => unimplemented!(),
+                (
+                    ActivationKind::Left(token),
+                    ReteNodeKind::Join {
+                        alpha_memory,
+                        tests,
+                    },
+                ) => {
+                    let mut new_activations = vec![];
+                    let alpha_memory = &self.alpha_network[&alpha_memory];
+                    let token = &self.tokens[&token];
+                    for wme in alpha_memory
+                        .wmes
+                        .iter()
+                        .filter(|wme| tests.iter().all(|test| self.join_test(test, token, wme)))
+                    {
+                        let new_token = Token {
+                            id: TokenId(self.id_generator.next()),
+                            parent: token.id,
+                            node: node.id,
+                            wme: *wme,
+                        };
+                        new_tokens.push(new_token);
+                        new_activations.extend(node.children.iter().map(|id| Activation {
+                            node: *id,
+                            kind: ActivationKind::Left(new_token.id),
+                        }));
                     }
+                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    self.pending_activations.extend(new_activations);
                 }
+                (ActivationKind::Left(_), ReteNodeKind::P { .. }) => unimplemented!(),
+                (ActivationKind::Right(_), ReteNodeKind::Beta { .. }) => unimplemented!(),
+                (
+                    ActivationKind::Right(wme),
+                    ReteNodeKind::Join {
+                        alpha_memory,
+                        tests,
+                    },
+                ) => {
+                    let log = log.new(o!("alpha" => alpha_memory.0, "beta" => node.parent.0));
+                    let beta_node = &self.beta_network[&node.parent];
+                    let tokens = match beta_node.kind {
+                        ReteNodeKind::Beta { ref tokens } => tokens,
+                        _ => unreachable!(),
+                    };
+                    trace!(log, "scanning {} tokens", tokens.len());
+                    let new_activations: Vec<_> = tokens
+                        .iter()
+                        .map(|token| self.tokens[token])
+                        .inspect(|token| trace!(log, "retrieved token"; "token" => ?token.id))
+                        .filter(|token| tests.iter().all(|test| self.join_test(test, token, &wme)))
+                        .inspect(|token| trace!(log, "passed tests"; "token" => ?token.id))
+                        .flat_map(|token| {
+                            node.children.iter().map(move |id| Activation {
+                                node: *id,
+                                kind: ActivationKind::Left(token.id),
+                            })
+                        })
+                        .collect();
+
+                    // //// BEGIN HACKERY
+                    // new_tokens.extend(new_activations.iter().map(|activation| {
+                    //     let token = match activation {
+                    //         Activation::BetaLeft(_, token_id) => &self.tokens[token_id],
+                    //         _ => unreachable!(),
+                    //     };
+                    //     Token {
+                    //         id: TokenId(self.id_generator.next()),
+                    //         parent: token.id,
+                    //         node: node.id,
+                    //         wme,
+                    //     }
+                    // }));
+                    // //// END HACKERY
+
+                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    self.pending_activations.extend(new_activations);
+                }
+                (ActivationKind::Right(_), ReteNodeKind::P { .. }) => unimplemented!(),
             }
+
             for new_token in new_tokens {
+                let node = self.beta_network.get_mut(&new_token.node).unwrap();
+                match &mut node.kind {
+                    ReteNodeKind::Beta { tokens } => tokens.insert(0, new_token.id),
+                    _ => {}
+                }
                 self.tokens.insert(new_token.id, new_token);
             }
         }
-    }
-
-    // Generate a new token and return its id.
-    fn make_token(&self, node: &ReteNode, parent: &Token, wme: Wme) -> TokenId {
-        let id = TokenId(self.id_generator.next());
-        let token = Token {
-            id,
-            parent: parent.id,
-            node: node.id,
-            wme,
-        };
-        // self.tokens.insert(id, token);
-        id
     }
 
     fn join_test(&self, test: &JoinNodeTest, token: &Token, wme: &Wme) -> bool {
@@ -452,6 +501,7 @@ impl Rete {
         wme.0[test.alpha_field] == other_wme.0[test.beta_field]
     }
 
+    #[cfg(test)]
     fn network_graph(&self) -> Graph<String, ()> {
         let mut graph = Graph::new();
         let mut alpha_indices = HashMap::new();
@@ -475,7 +525,9 @@ impl Rete {
                 node.id.0,
                 node.children.iter().map(|id| id.0).collect::<Vec<usize>>(),
                 match node.kind {
-                    ReteNodeKind::Beta { ref tokens, .. } => format!("beta - {} tokens", tokens.len()),
+                    ReteNodeKind::Beta { ref tokens, .. } => {
+                        format!("beta - {} tokens", tokens.len())
+                    }
                     ReteNodeKind::Join { .. } => format!("join"),
                     ReteNodeKind::P { production } => format!("p: {:?}", production),
                 }
@@ -647,39 +699,8 @@ mod tests {
         assert_eq!(rete.beta_network.len(), 1); // dummy top node.
     }
 
-    #[test]
-    fn add_wmes() {
-        let mut rete = Rete::new();
-        let test = AlphaTest([Some(0), Some(1), None]);
-        let alpha_memory = AlphaMemory {
-            id: AlphaMemoryId(0),
-            wmes: vec![],
-            successors: vec![],
-        };
-        rete.add_alpha_memory(test, alpha_memory);
-        let test = AlphaTest([Some(99), None, None]);
-        let alpha_memory = AlphaMemory {
-            id: AlphaMemoryId(1),
-            wmes: vec![],
-            successors: vec![],
-        };
-        rete.add_alpha_memory(test, alpha_memory);
-
-        assert_eq!(rete.alpha_network.len(), 2);
-
-        let wme = Wme([0, 1, 2]);
-        rete.add_wme(wme);
-
-        let alpha_memory = &rete.alpha_network[&AlphaMemoryId(0)];
-        assert_eq!(alpha_memory.wmes.len(), 1);
-
-        let alpha_memory = &rete.alpha_network[&AlphaMemoryId(1)];
-        assert_eq!(alpha_memory.wmes.len(), 0);
-    }
-
     mod blocks {
         use super::*;
-        use crate::*;
 
         pub const B1: usize = 1;
         pub const B2: usize = 2;
