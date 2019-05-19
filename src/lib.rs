@@ -133,6 +133,10 @@ impl Rete {
             AlphaTest([Some(wme.0[0]), Some(wme.0[1]), Some(wme.0[2])]),
         ];
 
+        // Ensure we have an entry for this WME, even if no alpha
+        // memories contain it.
+        self.wme_alpha_memories.entry(wme).or_default();
+
         for test in &tests {
             let alpha_memory_id = match self.alpha_tests.get(test) {
                 Some(id) => id,
@@ -223,7 +227,7 @@ impl Rete {
 
             // build or share alpha memory
             let alpha_test = AlphaTest::from(condition);
-            // Returns either an existing id or generate a new one.
+            // Returns either an existing id or generates a new one.
             let alpha_memory_id = self
                 .alpha_tests
                 .get(&alpha_test)
@@ -231,45 +235,56 @@ impl Rete {
                 .unwrap_or_else(|| AlphaMemoryId(self.id_generator.next()));
             // If we need a new alpha memory, create it.
             if !self.alpha_network.contains_key(&alpha_memory_id) {
+                // Collect the WMEs that should already be in this
+                // memory.
+                let wmes = self
+                    .wme_alpha_memories
+                    .iter_mut()
+                    .filter(|(wme, _)| alpha_test.matches(wme))
+                    .map(|(wme, alpha_memories)| {
+                        // Keep track of which alpha memories contain
+                        // this WME.
+                        alpha_memories.push(alpha_memory_id);
+                        *wme
+                    })
+                    .collect();
+
                 let memory = AlphaMemory {
                     id: alpha_memory_id,
-                    wmes: vec![],
+                    wmes,
                     successors: vec![],
                 };
-                trace!(
-                    log,
-                    "created alpha memory {:?} => {:?}",
-                    alpha_test,
-                    memory.id
-                );
+                trace!(log, "created alpha memory";
+                    "test" => ?alpha_test,
+                    "id" => ?memory.id,
+                    "wmes" => memory.wmes.len());
+
                 self.alpha_tests.insert(alpha_test, memory.id);
                 self.alpha_network.insert(memory.id, memory);
-                // TODO: Activate new alpha memory with existing WMEs.
             }
             let alpha_memory = &self.alpha_network[&alpha_memory_id];
 
             // build or share join node
-            current_node_id = {
-                let shared_node = self
-                    .beta_network
-                    .neighbors(current_node_id)
-                    .filter(|id| match self.beta_network[*id] {
-                        ReteNode::Join {
-                            alpha_memory: join_amem,
-                            tests: ref join_tests,
-                        } if join_amem == alpha_memory.id && *join_tests == tests => true,
-                        _ => false,
-                    })
-                    .next();
-                if let Some(shared_node) = shared_node {
-                    shared_node
-                } else {
+            current_node_id = self
+                .beta_network
+                .neighbors(current_node_id)
+                .find(|id| match self.beta_network[*id] {
+                    ReteNode::Join {
+                        alpha_memory: join_amem,
+                        tests: ref join_tests,
+                    } if join_amem == alpha_memory.id && *join_tests == tests => true,
+                    _ => false,
+                })
+                .unwrap_or_else(|| {
+                    // If we couldn't find a node to share, create
+                    // one.
                     let new_node = ReteNode::Join {
                         alpha_memory: alpha_memory_id,
                         tests,
                     };
                     let id = self.beta_network.add_node(new_node);
                     self.beta_network.add_edge(current_node_id, id, ());
+                    trace!(log, "create join node"; "id" => ?id);
                     // link to alpha memory
                     self.alpha_network
                         .get_mut(&alpha_memory_id)
@@ -277,27 +292,25 @@ impl Rete {
                         .successors
                         .push(id);
                     id
-                }
-            };
+                });
 
             // build or share beta memory
             current_node_id = if i + 1 < production.conditions.len() {
-                let shared_node = self
-                    .beta_network
+                self.beta_network
                     .neighbors(current_node_id)
-                    .filter(|id| match self.beta_network[*id] {
+                    .find(|id| match self.beta_network[*id] {
                         ReteNode::Beta { .. } => true,
                         _ => false,
                     })
-                    .next();
-                if let Some(shared_node) = shared_node {
-                    shared_node
-                } else {
-                    let new_node = ReteNode::Beta { tokens: vec![] };
-                    let id = self.beta_network.add_node(new_node);
-                    self.beta_network.add_edge(current_node_id, id, ());
-                    id
-                }
+                    .unwrap_or_else(|| {
+                        // If we couldn't find a node to share, create
+                        // one.
+                        let new_node = ReteNode::Beta { tokens: vec![] };
+                        let id = self.beta_network.add_node(new_node);
+                        self.beta_network.add_edge(current_node_id, id, ());
+                        trace!(log, "create beta memory"; "id" => ?id);
+                        id
+                    })
             } else {
                 current_node_id
             };
@@ -507,6 +520,14 @@ impl Rete {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct AlphaTest([Option<SymbolID>; 3]);
+
+impl AlphaTest {
+    fn matches(&self, wme: &Wme) -> bool {
+        self.0[0].map_or(true, |s| s == wme.0[0])
+            && self.0[1].map_or(true, |s| s == wme.0[1])
+            && self.0[2].map_or(true, |s| s == wme.0[2])
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct AlphaMemoryId(usize);
@@ -767,6 +788,10 @@ mod tests {
             for p in productions() {
                 rete.add_production(p);
             }
+
+            let graph = rete.network_graph();
+            let buffer = format!("{:?}", petgraph::dot::Dot::new(&graph));
+            std::fs::write("graph-wmes-then-productions.dot", buffer).ok();
 
             assert!(rete
                 .take_events()
