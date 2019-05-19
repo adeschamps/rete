@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate slog;
 
-use petgraph::{Directed, Direction, stable_graph::StableGraph};
+use petgraph::{stable_graph::StableGraph, Directed, Direction};
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
@@ -31,7 +31,7 @@ pub struct Rete {
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
     beta_network: StableGraph<ReteNode, (), Directed>,
     dummy_node_id: ReteNodeId,
-    tokens: HashMap<TokenId, Token>,
+    tokens: StableGraph<Token, (), Directed>,
 
     productions: HashMap<ProductionID, Production>,
 
@@ -42,11 +42,6 @@ pub struct Rete {
     /// Whenever a token is created, it is added to this collection.
     /// This makes removals more efficient.
     wme_tokens: HashMap<Wme, Vec<TokenId>>,
-
-    /// For each token, the list of tokens that are its children.
-    ///
-    /// TODO: This could be replaced with a proper graph.
-    token_children: HashMap<TokenId, Vec<TokenId>>,
 
     /// To avoid recursive function calls when activating memory
     /// nodes, we queue up activations here. The activate_memories
@@ -92,22 +87,20 @@ impl Rete {
 
         let id_generator = IdGenerator::default();
 
-        let mut tokens = HashMap::new();
         let mut beta_network = StableGraph::new();
+        let mut tokens = StableGraph::new();
 
         let dummy_node = ReteNode::Beta { tokens: vec![] };
         let dummy_node_id = beta_network.add_node(dummy_node);
         let dummy_token = Token {
-            id: TokenId(id_generator.next()),
-            parent: TokenId(id_generator.next()),
             wme: Wme([0, 0, 0]),
             node: dummy_node_id,
         };
+        let dummy_token_id = tokens.add_node(dummy_token);
         match &mut beta_network[dummy_node_id] {
-            ReteNode::Beta { tokens } => tokens.push(dummy_token.id),
+            ReteNode::Beta { tokens } => tokens.push(dummy_token_id),
             _ => unreachable!("this is definitely a beta node"),
         }
-        tokens.insert(dummy_token.id, dummy_token);
 
         Rete {
             log,
@@ -119,7 +112,6 @@ impl Rete {
             productions: HashMap::new(),
             wme_alpha_memories: HashMap::new(),
             wme_tokens: HashMap::new(),
-            token_children: HashMap::new(),
             pending_activations: Vec::new(),
             events: Vec::new(),
             id_generator,
@@ -186,13 +178,11 @@ impl Rete {
             .wme_tokens
             .remove(&wme)
             .expect("removing WME that is not in any tokens.");
-        while let Some(token) = tokens_to_remove.pop() {
-            let token = self.tokens.remove(&token).unwrap();
-            if let Some(more_tokens) = self.token_children.remove(&token.id) {
-                tokens_to_remove.extend(more_tokens);
-            }
+        while let Some(token_id) = tokens_to_remove.pop() {
+            tokens_to_remove.extend(self.tokens.neighbors(token_id));
+            let token = self.tokens.remove_node(token_id).unwrap();
             match self.beta_network[token.node] {
-                ReteNode::Beta { ref mut tokens } => tokens.retain(|t| *t != token.id),
+                ReteNode::Beta { ref mut tokens } => tokens.retain(|t| *t != token_id),
                 _ => unreachable!(),
             }
         }
@@ -347,21 +337,20 @@ impl Rete {
             let mut new_tokens = vec![];
             match (&activation.kind, &node) {
                 (ActivationKind::Left(wme, token), ReteNode::Beta { .. }) => {
-                    let token = self.tokens[&token];
                     let new_token = Token {
-                        id: TokenId(self.id_generator.next()),
-                        parent: token.id,
                         wme: *wme,
                         node: activation.node,
                     };
                     trace!(log, "new token"; "token" => ?new_token);
-                    new_tokens.push(new_token);
+                    let new_token_id = self.tokens.add_node(new_token);
+                    self.tokens.add_edge(*token, new_token_id, ());
+                    new_tokens.push(new_token_id);
                     let new_activations: Vec<_> = self
                         .beta_network
                         .neighbors(activation.node)
                         .map(|id| Activation {
                             node: id,
-                            kind: ActivationKind::Left(*wme, new_token.id),
+                            kind: ActivationKind::Left(*wme, new_token_id),
                         })
                         .collect();
                     trace!(log, "enqueing {} new activations", new_activations.len());
@@ -375,17 +364,16 @@ impl Rete {
                     },
                 ) => {
                     let alpha_memory = &self.alpha_network[&alpha_memory];
-                    let token = &self.tokens[&token];
                     let new_activations: Vec<_> = alpha_memory
                         .wmes
                         .iter()
-                        .filter(|wme| tests.iter().all(|test| self.join_test(test, token, wme)))
+                        .filter(|wme| tests.iter().all(|test| self.join_test(test, *token, wme)))
                         .flat_map(|wme| {
                             self.beta_network
                                 .neighbors(activation.node)
                                 .map(move |id| Activation {
                                     node: id,
-                                    kind: ActivationKind::Left(*wme, token.id),
+                                    kind: ActivationKind::Left(*wme, *token),
                                 })
                         })
                         .collect();
@@ -420,14 +408,15 @@ impl Rete {
                     trace!(log, "scanning {} tokens", tokens.len());
                     let new_activations: Vec<_> = tokens
                         .iter()
-                        .map(|token| self.tokens[token])
-                        .filter(|token| tests.iter().all(|test| self.join_test(test, token, &wme)))
+                        .filter(|token| {
+                            tests.iter().all(|test| self.join_test(test, **token, &wme))
+                        })
                         .flat_map(|token| {
                             self.beta_network
                                 .neighbors(activation.node)
                                 .map(move |id| Activation {
                                     node: id,
-                                    kind: ActivationKind::Left(*wme, token.id),
+                                    kind: ActivationKind::Left(*wme, *token),
                                 })
                         })
                         .collect();
@@ -441,19 +430,23 @@ impl Rete {
             }
 
             for new_token in new_tokens {
-                match &mut self.beta_network[new_token.node] {
-                    ReteNode::Beta { tokens } => tokens.insert(0, new_token.id),
+                match &mut self.beta_network[activation.node] {
+                    ReteNode::Beta { tokens } => tokens.insert(0, new_token),
                     _ => unreachable!("tokens can only be stored in beta nodes"),
                 }
-                self.tokens.insert(new_token.id, new_token);
+                // self.tokens.insert(new_token.id, new_token);
             }
         }
     }
 
-    fn join_test(&self, test: &JoinNodeTest, token: &Token, wme: &Wme) -> bool {
-        let other_wme = (0..test.beta_condition_offset)
-            .fold(token, |token, _| &self.tokens[&token.parent])
-            .wme;
+    fn join_test(&self, test: &JoinNodeTest, token: TokenId, wme: &Wme) -> bool {
+        let token = (0..test.beta_condition_offset).fold(token, |token, _| {
+            self.tokens
+                .neighbors_directed(token, Direction::Incoming)
+                .next()
+                .unwrap()
+        });
+        let other_wme = self.tokens[token].wme;
 
         wme.0[test.alpha_field] == other_wme.0[test.beta_field]
     }
@@ -566,13 +559,12 @@ struct JoinNodeTest {
     beta_condition_offset: usize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct TokenId(usize);
+type TokenId = petgraph::graph::NodeIndex;
+// #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+// struct TokenId(usize);
 
 #[derive(Clone, Copy, Debug)]
 struct Token {
-    id: TokenId,
-    parent: TokenId,
     wme: Wme,
     /// The rete node containing this token. Used for quick removals.
     node: ReteNodeId,
