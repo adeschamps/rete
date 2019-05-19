@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate slog;
 
-use petgraph::{Directed, Direction, Graph};
+use petgraph::{Directed, Direction, stable_graph::StableGraph};
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
@@ -29,7 +29,7 @@ pub struct Rete {
     log: Logger,
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
-    beta_network: Graph<ReteNode, (), Directed>,
+    beta_network: StableGraph<ReteNode, (), Directed>,
     dummy_node_id: ReteNodeId,
     tokens: HashMap<TokenId, Token>,
 
@@ -92,8 +92,8 @@ impl Rete {
 
         let id_generator = IdGenerator::default();
 
-        let mut beta_network = Graph::new();
         let mut tokens = HashMap::new();
+        let mut beta_network = StableGraph::new();
 
         let dummy_node = ReteNode::Beta { tokens: vec![] };
         let dummy_node_id = beta_network.add_node(dummy_node);
@@ -459,10 +459,10 @@ impl Rete {
     }
 
     #[cfg(test)]
-    fn network_graph(&self) -> Graph<String, &'static str> {
+    fn network_graph(&self) -> petgraph::Graph<String, &'static str> {
         use petgraph::visit::IntoNodeReferences;
 
-        let mut graph = Graph::new();
+        let mut graph = petgraph::Graph::new();
         let mut alpha_indices = HashMap::new();
         let mut indices = HashMap::new();
 
