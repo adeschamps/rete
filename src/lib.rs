@@ -8,6 +8,7 @@ use petgraph::{
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
+    fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -205,7 +206,7 @@ impl Rete {
 
         for i in 0..production.conditions.len() {
             let condition = production.conditions[i];
-            trace!(log, "add condition"; "condition" => ?condition);
+            trace!(log, "add condition: {:?}", condition);
 
             // get join tests from condition
             // NOTE: This does not handle intra-condition tests.
@@ -410,6 +411,7 @@ impl Rete {
                     trace!(log, "enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
+
                 (
                     ActivationKind::Left(_, token),
                     ReteNode::Join {
@@ -435,14 +437,17 @@ impl Rete {
                     trace!(log, "enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
+
                 (ActivationKind::Left(_, token), ReteNode::P { production, .. }) => {
                     info!(log, "Activated P node"; "production" => ?production);
                     self.events.push(Event::Fired(*production));
                     activations.push((activation.node, token));
                 }
+
                 (ActivationKind::Right(_), ReteNode::Beta { .. }) => {
                     unreachable!("beta nodes are never right activated")
                 }
+
                 (
                     ActivationKind::Right(wme),
                     ReteNode::Join {
@@ -479,6 +484,7 @@ impl Rete {
                     trace!(log, "enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
+
                 (ActivationKind::Right(_), ReteNode::P { .. }) => {
                     unreachable!("p-nodes are never right activated")
                 }
@@ -522,12 +528,7 @@ impl Rete {
 
         for (test, id) in &self.alpha_tests {
             let node = &self.alpha_network[id];
-            let value = format!(
-                "{:?}\ntest: {:?}\nwmes: {}",
-                node.id,
-                test.0,
-                node.wmes.len()
-            );
+            let value = format!("{:?}\ntest: {}\nwmes: {}", node.id, test, node.wmes.len());
             let index = graph.add_node(value);
             alpha_indices.insert(id, index);
         }
@@ -536,11 +537,27 @@ impl Rete {
             let value = format!(
                 "id: {:?}\nchildren: {:?}\nkind: {}",
                 id,
-                self.beta_network.neighbors(id).collect::<Vec<ReteNodeId>>(),
+                self.beta_network
+                    .neighbors(id)
+                    .map(|id| id.index())
+                    .collect::<Vec<_>>(),
                 match node {
-                    ReteNode::Beta { ref tokens, .. } => format!("beta - {} tokens", tokens.len()),
+                    ReteNode::Beta { ref tokens, .. } => format!(
+                        "beta - tokens: {:?}",
+                        tokens.iter().map(|token| token.index()).collect::<Vec<_>>()
+                    ),
                     ReteNode::Join { ref tests, .. } => format!("join - {} tests", tests.len()),
-                    ReteNode::P { production } => format!("p: {:?}", production),
+                    ReteNode::P {
+                        production,
+                        activations,
+                    } => format!(
+                        "p: {} - tokens: {:?}",
+                        production.0,
+                        activations
+                            .iter()
+                            .map(|token| token.index())
+                            .collect::<Vec<_>>()
+                    ),
                 }
             );
             let index = graph.add_node(value);
@@ -564,10 +581,39 @@ impl Rete {
         }
         graph
     }
+
+    #[cfg(test)]
+    fn token_graph(&self) -> StableGraph<String, &'static str> {
+        self.tokens.map(
+            |index, token| format!("token {}\n{:?}\n{:?}", index.index(), token.wme, token.node),
+            |_, _| "",
+        )
+    }
+
+    #[cfg(test)]
+    fn write_graphs(&self) {
+        let graph = self.network_graph();
+        let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
+        std::fs::write("network.dot", buffer).ok();
+
+        let graph = self.token_graph();
+        let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
+        std::fs::write("tokens.dot", buffer).ok();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct AlphaTest([Option<SymbolID>; 3]);
+
+impl fmt::Display for AlphaTest {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let t = |test| match test {
+            Some(symbol) => format!("{}", symbol),
+            None => format!("*"),
+        };
+        write!(f, "({}, {}, {})", t(self.0[0]), t(self.0[1]), t(self.0[2]))
+    }
+}
 
 impl AlphaTest {
     fn matches(&self, wme: &Wme) -> bool {
@@ -590,20 +636,6 @@ struct AlphaMemory {
 //////////
 
 type ReteNodeId = petgraph::graph::NodeIndex;
-// #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-// struct ReteNodeId(usize);
-
-// unsafe impl petgraph::graph::IndexType for ReteNodeId {
-//     fn new(x: usize) -> Self {
-//         ReteNodeId(x)
-//     }
-//     fn index(&self) -> usize {
-//         self.0
-//     }
-//     fn max() -> Self {
-//         Self::new(<usize as petgraph::graph::IndexType>::max())
-//     }
-// }
 
 #[derive(Debug)]
 enum ReteNode {
@@ -824,9 +856,7 @@ mod tests {
                 rete.add_wme(wme);
             }
 
-            let graph = rete.network_graph();
-            let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
-            std::fs::write("graph.dot", buffer).ok();
+            rete.write_graphs();
 
             assert!(rete
                 .take_events()
@@ -846,9 +876,7 @@ mod tests {
                 rete.add_production(p);
             }
 
-            let graph = rete.network_graph();
-            let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
-            std::fs::write("graph-wmes-then-productions.dot", buffer).ok();
+            rete.write_graphs();
 
             assert!(rete
                 .take_events()
