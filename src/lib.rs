@@ -1,7 +1,10 @@
 #[macro_use]
 extern crate slog;
 
-use petgraph::{stable_graph::StableGraph, Directed, Direction};
+use petgraph::{
+    stable_graph::{NodeIndex, StableGraph},
+    Directed, Direction,
+};
 use slog::{Drain, Logger};
 use std::{
     collections::HashMap,
@@ -311,6 +314,9 @@ impl Rete {
                         let id = self.beta_network.add_node(new_node);
                         self.beta_network.add_edge(current_node_id, id, ());
                         trace!(log, "create beta memory"; "id" => ?id);
+
+                        self.activate_new_node(log.clone(), current_node_id, id);
+
                         id
                     })
             } else {
@@ -323,10 +329,10 @@ impl Rete {
             production: production.id,
         };
         let id = self.beta_network.add_node(new_node);
+        trace!(log, "create p node"; "id" => ?id);
         self.beta_network.add_edge(current_node_id, id, ());
+        self.activate_new_node(log.clone(), current_node_id, id);
         trace!(log, "new p node"; "id" => ?id);
-
-        // TODO: update new node with existing matches
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
@@ -341,6 +347,37 @@ impl Rete {
         let mut events = Vec::new();
         std::mem::swap(&mut events, &mut self.events);
         events
+    }
+
+    fn activate_new_node(&mut self, log: Logger, parent: NodeIndex, new_node: NodeIndex) {
+        let log = log.new(o!("new node" => new_node.index()));
+        trace!(log, "activate new node");
+        match self.beta_network[parent] {
+            ReteNode::Beta { .. } => unimplemented!(),
+
+            ReteNode::Join { alpha_memory, .. } => {
+                trace!(log, "parent is a join node");
+                let children: Vec<_> = self.beta_network.neighbors(parent).collect();
+                for child in &children {
+                    if let Some(edge) = self.beta_network.find_edge(parent, *child) {
+                        self.beta_network.remove_edge(edge);
+                    }
+                }
+                self.beta_network.add_edge(parent, new_node, ());
+                for wme in &self.alpha_network[&alpha_memory].wmes {
+                    self.pending_activations.push(Activation {
+                        node: parent,
+                        kind: ActivationKind::Right(*wme),
+                    });
+                }
+                self.activate_memories(log);
+                for child in children {
+                    self.beta_network.update_edge(parent, child, ());
+                }
+            }
+
+            ReteNode::P { .. } => unreachable!("P nodes never have any children"),
+        }
     }
 
     fn activate_memories(&mut self, log: Logger) {
