@@ -768,7 +768,7 @@ mod tests {
             }
 
             let graph = rete.network_graph();
-            let buffer = format!("{:?}", petgraph::dot::Dot::new(&graph));
+            let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
             std::fs::write("graph.dot", buffer).ok();
 
             assert!(rete
@@ -790,7 +790,7 @@ mod tests {
             }
 
             let graph = rete.network_graph();
-            let buffer = format!("{:?}", petgraph::dot::Dot::new(&graph));
+            let buffer = format!("{}", petgraph::dot::Dot::new(&graph));
             std::fs::write("graph-wmes-then-productions.dot", buffer).ok();
 
             assert!(rete
