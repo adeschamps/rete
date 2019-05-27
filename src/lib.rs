@@ -128,14 +128,15 @@ impl Rete {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "add wme");
 
+        #[rustfmt::skip]
         let tests = [
-            AlphaTest([None, None, None]),
-            AlphaTest([None, None, Some(wme.0[2])]),
-            AlphaTest([None, Some(wme.0[1]), None]),
-            AlphaTest([None, Some(wme.0[1]), Some(wme.0[2])]),
-            AlphaTest([Some(wme.0[0]), None, None]),
-            AlphaTest([Some(wme.0[0]), None, Some(wme.0[2])]),
-            AlphaTest([Some(wme.0[0]), Some(wme.0[1]), None]),
+            AlphaTest([None,           None,           None          ]),
+            AlphaTest([None,           None,           Some(wme.0[2])]),
+            AlphaTest([None,           Some(wme.0[1]), None          ]),
+            AlphaTest([None,           Some(wme.0[1]), Some(wme.0[2])]),
+            AlphaTest([Some(wme.0[0]), None,           None          ]),
+            AlphaTest([Some(wme.0[0]), None,           Some(wme.0[2])]),
+            AlphaTest([Some(wme.0[0]), Some(wme.0[1]), None          ]),
             AlphaTest([Some(wme.0[0]), Some(wme.0[1]), Some(wme.0[2])]),
         ];
 
