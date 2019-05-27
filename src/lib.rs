@@ -327,6 +327,7 @@ impl Rete {
         // Build new production node
         let new_node = ReteNode::P {
             production: production.id,
+            activations: vec![],
         };
         let id = self.beta_network.add_node(new_node);
         trace!(log, "create p node"; "id" => ?id);
@@ -387,6 +388,7 @@ impl Rete {
             let node = &self.beta_network[activation.node];
             trace!(log, "activating");
             let mut new_tokens = vec![];
+            let mut activations = vec![];
             match (&activation.kind, &node) {
                 (ActivationKind::Left(wme, token), ReteNode::Beta { .. }) => {
                     let new_token = Token {
@@ -433,9 +435,10 @@ impl Rete {
                     trace!(log, "enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
-                (ActivationKind::Left(_, _), ReteNode::P { production }) => {
+                (ActivationKind::Left(_, token), ReteNode::P { production, .. }) => {
                     info!(log, "Activated P node"; "production" => ?production);
                     self.events.push(Event::Fired(*production));
+                    activations.push((activation.node, token));
                 }
                 (ActivationKind::Right(_), ReteNode::Beta { .. }) => {
                     unreachable!("beta nodes are never right activated")
@@ -486,7 +489,13 @@ impl Rete {
                     ReteNode::Beta { tokens } => tokens.insert(0, new_token),
                     _ => unreachable!("tokens can only be stored in beta nodes"),
                 }
-                // self.tokens.insert(new_token.id, new_token);
+            }
+
+            for (production, token) in activations {
+                match &mut self.beta_network[production] {
+                    ReteNode::P { activations, .. } => activations.push(*token),
+                    _ => unreachable!(),
+                }
             }
         }
     }
@@ -607,6 +616,7 @@ enum ReteNode {
     },
     P {
         production: ProductionID,
+        activations: Vec<TokenId>,
     },
 }
 
