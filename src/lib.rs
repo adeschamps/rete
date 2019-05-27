@@ -397,7 +397,7 @@ impl Rete {
                     };
                     trace!(log, "new token"; "token" => ?new_token);
                     let new_token_id = self.tokens.add_node(new_token);
-                    self.tokens.add_edge(*token, new_token_id, ());
+                    self.tokens.add_edge(new_token_id, *token, ());
                     new_tokens.push(new_token_id);
                     let new_activations: Vec<_> = self
                         .beta_network
