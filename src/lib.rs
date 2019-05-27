@@ -75,14 +75,16 @@ enum ActivationKind {
 
 impl Default for Rete {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl Rete {
-    pub fn new() -> Self {
-        let drain = slog_stdlog::StdLog;
-        let log = Logger::root(drain.fuse(), o!());
+    pub fn new(log: impl Into<Option<slog::Logger>>) -> Self {
+        let log = log.into().unwrap_or_else(|| {
+            let drain = slog_stdlog::StdLog;
+            Logger::root(drain.fuse(), o!())
+        });
         info!(log, "constructing rete");
 
         let id_generator = IdGenerator::default();
@@ -344,7 +346,7 @@ impl Rete {
     fn activate_memories(&mut self, log: Logger) {
         trace!(log, "activate memories");
         while let Some(activation) = self.pending_activations.pop() {
-            let log = log.new(o!("activation" => format!("{:?}", activation)));
+            let log = log.new(o!("activation" => format!("{:?}", activation), "remaining" => self.pending_activations.len()));
             let node = &self.beta_network[activation.node];
             trace!(log, "activating");
             let mut new_tokens = vec![];
@@ -651,13 +653,21 @@ impl From<ConditionTest> for Option<SymbolID> {
 mod tests {
     use super::*;
 
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
+    fn init() -> slog::Logger {
+        // let _ = env_logger::builder().is_test(true).try_init();
+
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+        // let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = std::sync::Mutex::new(drain).fuse();
+        let log = slog::Logger::root(drain, o! {});
+
+        log
     }
 
     #[test]
     fn empty_rete() {
-        let rete = Rete::new();
+        let rete = Rete::new(None);
         assert_eq!(rete.alpha_network.len(), 0);
         assert_eq!(rete.beta_network.node_count(), 1); // dummy top node.
     }
@@ -756,9 +766,9 @@ mod tests {
 
         #[test]
         fn add_productions_and_wmes() {
-            init();
+            let log = init();
 
-            let mut rete = Rete::default();
+            let mut rete = Rete::new(log);
             for p in productions() {
                 rete.add_production(p);
             }
@@ -779,9 +789,9 @@ mod tests {
 
         #[test]
         fn add_wmes_then_productions() {
-            init();
+            let log = init();
 
-            let mut rete = Rete::default();
+            let mut rete = Rete::new(log);
             for wme in wmes() {
                 rete.add_wme(wme);
             }
