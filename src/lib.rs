@@ -386,9 +386,9 @@ impl Rete {
     fn activate_memories(&mut self, log: Logger) {
         trace!(log, "activate memories");
         while let Some(activation) = self.pending_activations.pop() {
-            let log = log.new(o!("activation" => format!("{:?}", activation), "remaining" => self.pending_activations.len()));
+            let log = log.new(o!("activation" => format!("{:?}", activation)));
             let node = &self.beta_network[activation.node];
-            trace!(log, "activating");
+            trace!(log, "activating"; "remaining" => self.pending_activations.len());
             let mut new_tokens = vec![];
             let mut activations = vec![];
             match (&activation.kind, &node) {
