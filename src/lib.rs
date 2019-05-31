@@ -12,6 +12,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(feature = "trace")]
+pub mod trace;
+
 type SymbolID = usize;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
