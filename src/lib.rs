@@ -153,7 +153,8 @@ impl Rete {
 
         // Ensure we have an entry for this WME, even if no alpha
         // memories contain it.
-        self.wme_alpha_memories.entry(wme).or_default();
+        let _ = self.wme_alpha_memories.entry(wme).or_default();
+        let _ = self.wme_tokens.entry(wme).or_default();
 
         for test in &tests {
             let alpha_memory_id = match self.alpha_tests.get(test) {
@@ -190,7 +191,7 @@ impl Rete {
         let alpha_memories = self
             .wme_alpha_memories
             .remove(&wme)
-            .expect("removing WME that is not in any alpha memories.");
+            .expect("removing a WME that is not in any alpha memories.");
         for memory in alpha_memories {
             let alpha_memory = self.alpha_network.get_mut(&memory).unwrap();
             alpha_memory.wmes.retain(|w| *w != wme);
@@ -199,13 +200,13 @@ impl Rete {
         let mut tokens_to_remove = self
             .wme_tokens
             .remove(&wme)
-            .expect("removing WME that is not in any tokens.");
+            .expect("removing a WME that is not in any tokens.");
         while let Some(token_id) = tokens_to_remove.pop() {
             tokens_to_remove.extend(self.tokens.neighbors(token_id));
             let token = self.tokens.remove_node(token_id).unwrap();
             match self.beta_network[token.node] {
                 ReteNode::Beta { ref mut tokens } => tokens.retain(|t| *t != token_id),
-                _ => unreachable!("attempt to remove a wme from a non-beta node"),
+                _ => unreachable!("attempt to remove a WME from a non-beta node"),
             }
         }
     }
@@ -415,6 +416,7 @@ impl Rete {
                     let new_token_id = self.tokens.add_node(new_token);
                     self.tokens.add_edge(new_token_id, *token, ());
                     new_tokens.push(new_token_id);
+                    self.wme_tokens.get_mut(wme).unwrap().push(new_token_id);
                     let new_activations: Vec<_> = self
                         .beta_network
                         .neighbors(activation.node)
@@ -903,6 +905,22 @@ mod tests {
                 .take_events()
                 .iter()
                 .any(|event| *event == Event::Fired(ProductionID(1))));
+        }
+
+        #[test]
+        fn add_and_remove_wmes() {
+            let log = init();
+
+            let mut rete = Rete::new(log);
+            for wme in wmes() {
+                rete.add_wme(wme);
+            }
+            for wme in wmes() {
+                rete.remove_wme(wme);
+            }
+
+            assert!(rete.wme_alpha_memories.is_empty());
+            assert!(rete.wme_tokens.is_empty());
         }
     }
 }
