@@ -14,6 +14,8 @@ use std::{
 
 #[cfg(feature = "trace")]
 pub mod trace;
+#[cfg(feature = "trace")]
+use trace::Trace;
 
 type SymbolID = usize;
 
@@ -111,6 +113,9 @@ impl Rete {
             _ => unreachable!("this is definitely a beta node"),
         }
 
+        #[cfg(feature = "trace")]
+        info!(log, "init"; Trace::Initialized);
+
         Rete {
             log,
             alpha_tests: HashMap::new(),
@@ -197,7 +202,7 @@ impl Rete {
             let token = self.tokens.remove_node(token_id).unwrap();
             match self.beta_network[token.node] {
                 ReteNode::Beta { ref mut tokens } => tokens.retain(|t| *t != token_id),
-                _ => unreachable!(),
+                _ => unreachable!("attempt to remove a wme from a non-beta node"),
             }
         }
     }
@@ -737,6 +742,8 @@ mod tests {
     use super::*;
 
     fn init() -> slog::Logger {
+        color_backtrace::install();
+
         // let _ = env_logger::builder().is_test(true).try_init();
 
         let decorator = slog_term::TermDecorator::new().build();
