@@ -9,27 +9,27 @@ use std::fmt;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Trace {
     Initialized,
-    WmeAdded {
+    AddedWme {
         id: usize,
     },
-    WmeRemoved {
+    RemovedWme {
         id: usize,
     },
-    ProductionAdded {
+    AddedProduction {
         id: usize,
     },
-    ProductionRemoved {
+    RemovedProduction {
         id: usize,
     },
-    TokenAdded {
+    AddedToken {
         node_id: usize,
         token_id: usize,
         parent_token_id: usize,
     },
-    TokenRemoved {
+    RemovedToken {
         token_id: usize,
     },
-    NodeAdded {
+    AddedNode {
         id: usize,
         parent_id: usize,
         kind: (),

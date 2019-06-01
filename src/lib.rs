@@ -136,6 +136,9 @@ impl Rete {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "add wme");
 
+        #[cfg(feature = "trace")]
+        trace!(log, "add wme"; Trace::AddedWme { id: 0 });
+
         #[rustfmt::skip]
         let tests = [
             AlphaTest([None,           None,           None          ]),
@@ -210,6 +213,9 @@ impl Rete {
     pub fn add_production(&mut self, production: Production) {
         let log = self.log.new(o!("production_id" => production.id.0));
         trace!(log, "add production"; "production" => ?production);
+
+        #[cfg(feature = "trace")]
+        info!(log, "add production"; Trace::AddedProduction { id: production.id.0 });
 
         let mut current_node_id = self.dummy_node_id;
 
@@ -744,11 +750,15 @@ mod tests {
     fn init() -> slog::Logger {
         color_backtrace::install();
 
-        // let _ = env_logger::builder().is_test(true).try_init();
+        #[cfg(not(feature = "trace"))]
+        let drain = {
+            let decorator = slog_term::TermDecorator::new().build();
+            slog_term::CompactFormat::new(decorator).build().fuse()
+        };
 
-        let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-        // let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        #[cfg(feature = "trace")]
+        let drain = trace::ObserverDrain;
+
         let drain = std::sync::Mutex::new(drain).fuse();
         let log = slog::Logger::root(drain, o! {});
 
