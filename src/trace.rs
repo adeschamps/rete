@@ -1,3 +1,5 @@
+//! Tools for observing changes in the rete. Requires the `trace` feature.
+
 use serde::{Deserialize, Serialize};
 use slog::{Drain, Key, OwnedKVList, Record, SerdeValue, Serializer, KV};
 use std::fmt;
@@ -7,33 +9,43 @@ use std::fmt;
 /// The rete will emit values of this type via its logging
 /// infrastructure.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
 pub enum Trace {
+    /// Emitted once when a rete is constructed.
     Initialized,
-    AddedWme {
-        id: usize,
-    },
-    RemovedWme {
-        id: usize,
-    },
-    AddedProduction {
-        id: usize,
-    },
-    RemovedProduction {
-        id: usize,
-    },
+    /// A WME was inserted into working memory.
+    AddedWme { id: usize },
+    /// A WME was removed from working memory.
+    RemovedWme { id: usize },
+    /// A production was added to the rete.
+    AddedProduction { id: usize },
+    /// A production was removed from the rete.
+    RemovedProduction { id: usize },
+    /// A token was created in a beta node.
     AddedToken {
         node_id: usize,
         token_id: usize,
         parent_token_id: usize,
     },
-    RemovedToken {
-        token_id: usize,
-    },
+    /// A token was removed from a beta node.
+    RemovedToken { token_id: usize },
+    /// A node was created in the rete network.
     AddedNode {
         id: usize,
         parent_id: usize,
-        kind: (),
+        kind: NodeKind,
     },
+    /// A node was removed from the rete network.
+    RemovedNode { id: usize },
+}
+
+/// The different kinds of nodes that can exist in the rete network.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum NodeKind {
+    Alpha,
+    Beta,
+    Join,
+    P,
 }
 
 impl slog::Value for Trace {

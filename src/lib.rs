@@ -1,3 +1,11 @@
+//! This crate implements the rete pattern matching algorithm.
+//!
+//! The rete is a data structure and algorithm for efficiently
+//! detecting a large number of specific patterns in a graph
+//! structure. The implementation here is based largely on Robert
+//! Doorenbos' thesis, "Production Matching for Large Learning
+//! Systems".
+
 #[macro_use]
 extern crate slog;
 
@@ -17,10 +25,13 @@ pub mod trace;
 #[cfg(feature = "trace")]
 use trace::Trace;
 
-type SymbolID = usize;
 
+/// The type used to represent symbols. This may become a generic type parameter in the future.
+pub type SymbolID = usize;
+
+/// A working memory element.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Wme([SymbolID; 3]);
+pub struct Wme(pub [SymbolID; 3]);
 
 /// Generates unique identifiers.
 #[derive(Default)]
@@ -34,6 +45,7 @@ impl IdGenerator {
     }
 }
 
+/// A patten matcher using the rete algorithm.
 pub struct Rete {
     log: Logger,
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
@@ -89,6 +101,15 @@ impl Default for Rete {
 }
 
 impl Rete {
+    /// Construct a new rete. Optionally, a `slog::Logger` may be
+    /// passed in. If it is not provided, then the rete will fall back
+    /// to the standard log using the `slog_stdlog` crate.
+    ///
+    /// ```
+    /// # use rete::Rete;
+    /// // Construct a rete that logs to standard log.
+    /// let rete = Rete::new(None);
+    /// ```
     pub fn new(log: impl Into<Option<slog::Logger>>) -> Self {
         let log = log.into().unwrap_or_else(|| {
             let drain = slog_stdlog::StdLog;
@@ -132,6 +153,13 @@ impl Rete {
         }
     }
 
+    /// Insert a WME into working memory.
+    ///
+    /// ```
+    /// # use rete::{Rete, Wme};
+    /// let mut rete = Rete::default();
+    /// rete.add_wme(Wme([0, 1, 2]));
+    /// ```
     pub fn add_wme(&mut self, wme: Wme) {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "add wme");
@@ -184,6 +212,15 @@ impl Rete {
         self.activate_memories(log);
     }
 
+    /// Remove a WME from working memory.
+    ///
+    /// ```
+    /// # use rete::{Rete, Wme};
+    /// let mut rete = Rete::default();
+    /// let wme = Wme([0, 1, 2]);
+    /// rete.add_wme(wme);
+    /// rete.remove_wme(wme);
+    /// ```
     pub fn remove_wme(&mut self, wme: Wme) {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "remove wme");
@@ -211,6 +248,33 @@ impl Rete {
         }
     }
 
+    /// Add a production to the rete. No reordering of conitions is performed.
+    ///
+    /// ```
+    /// # use rete::*;
+    /// # use rete::ConditionTest::*;
+    /// let mut rete = Rete::default();
+    ///
+    /// // Add a production that includes a variable match:
+    /// //     (0 ^1 <a>)
+    /// //     (<a> ^2 3)
+    /// let production = Production {
+    ///     id: ProductionID(0),
+    ///     conditions: vec![
+    ///         Condition([Constant(0), Constant(1), Variable(VariableID(0))]),
+    ///         Condition([Variable(VariableID(0)), Constant(2), Constant(3)]),
+    ///     ],
+    /// };
+    /// rete.add_production(production);
+    ///
+    /// // Add an initial WME. The production should not match yet.
+    /// rete.add_wme(Wme([0, 1, 10]));
+    /// assert_eq!(rete.take_events(), vec![]);
+    ///
+    /// // Add a second WME that will cause the production to match.
+    /// rete.add_wme(Wme([10, 2, 3]));
+    /// assert_eq!(rete.take_events(), vec![Event::Fired(ProductionID(0))]);
+    /// ```
     pub fn add_production(&mut self, production: Production) {
         let log = self.log.new(o!("production_id" => production.id.0));
         trace!(log, "add production"; "production" => ?production);
@@ -307,6 +371,10 @@ impl Rete {
                     let id = self.beta_network.add_node(new_node);
                     self.beta_network.add_edge(current_node_id, id, ());
                     trace!(log, "create join node"; "id" => ?id);
+
+                    #[cfg(feature = "trace")]
+                    info!(log,"add node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::Join });
+
                     // link to alpha memory
                     self.alpha_network
                         .get_mut(&alpha_memory_id)
@@ -332,6 +400,9 @@ impl Rete {
                         self.beta_network.add_edge(current_node_id, id, ());
                         trace!(log, "create beta memory"; "id" => ?id);
 
+                        #[cfg(feature = "trace")]
+                        info!(log, "add node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::Beta });
+
                         self.activate_new_node(log.clone(), current_node_id, id);
 
                         id
@@ -351,6 +422,9 @@ impl Rete {
         self.beta_network.add_edge(current_node_id, id, ());
         self.activate_new_node(log.clone(), current_node_id, id);
         trace!(log, "new p node"; "id" => ?id);
+
+        #[cfg(feature = "trace")]
+        info!(log, "new p node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::P });
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
@@ -679,8 +753,6 @@ struct JoinNodeTest {
 }
 
 type TokenId = petgraph::graph::NodeIndex;
-// #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-// struct TokenId(usize);
 
 #[derive(Clone, Copy, Debug)]
 struct Token {
@@ -692,22 +764,22 @@ struct Token {
 //////////
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ProductionID(usize);
+pub struct ProductionID(pub usize);
 
 #[derive(Debug)]
 pub struct Production {
-    id: ProductionID,
-    conditions: Vec<Condition>,
+    pub id: ProductionID,
+    pub conditions: Vec<Condition>,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Condition([ConditionTest; 3]);
+pub struct Condition(pub [ConditionTest; 3]);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct VariableID(usize);
+pub struct VariableID(pub usize);
 
 #[derive(Clone, Copy, Debug)]
-enum ConditionTest {
+pub enum ConditionTest {
     Constant(SymbolID),
     Variable(VariableID),
 }

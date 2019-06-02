@@ -3,6 +3,7 @@ name = "rete"
 version = "0.1.0"
 authors = ["Anthony Deschamps <anthony.j.deschamps@gmail.com>"]
 edition = "2018"
+description = "An implementation of the rete rule matching algorithm"
 
 [dependencies]
 erased-serde = { version = "0.3.9", optional = true }
