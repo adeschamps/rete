@@ -165,7 +165,7 @@ impl Rete {
         trace!(log, "add wme");
 
         #[cfg(feature = "trace")]
-        trace!(log, "add wme"; Trace::AddedWme { id: 0 });
+        info!(log, "add wme"; Trace::AddedWme { id: 0 });
 
         #[rustfmt::skip]
         let tests = [
@@ -831,7 +831,7 @@ mod tests {
         };
 
         #[cfg(feature = "trace")]
-        let drain = trace::ObserverDrain;
+        let drain = trace::ObserverDrain::new(|msg| println!("{:?}", msg));
 
         let drain = std::sync::Mutex::new(drain).fuse();
         let log = slog::Logger::root(drain, o! {});

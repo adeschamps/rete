@@ -20,4 +20,4 @@ slog-term = "2.4.0"
 
 [features]
 default = []
-trace = ["erased-serde", "serde", "serde_json"]
+trace = ["erased-serde", "serde"]
