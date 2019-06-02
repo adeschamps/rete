@@ -25,6 +25,8 @@ pub mod trace;
 #[cfg(feature = "trace")]
 use trace::Trace;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 /// The type used to represent symbols. This may become a generic type parameter in the future.
 pub type SymbolID = usize;
