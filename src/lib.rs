@@ -25,7 +25,7 @@ pub mod trace;
 #[cfg(feature = "trace")]
 use trace::Trace;
 
-#[cfg(feature = "wasm")]
+#[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
 /// The type used to represent symbols. This may become a generic type parameter in the future.
@@ -995,6 +995,11 @@ mod tests {
 
             assert!(rete.wme_alpha_memories.is_empty());
             assert!(rete.wme_tokens.is_empty());
+        }
+
+        #[test]
+        fn duplicate_tokens() {
+            unimplemented!()
         }
     }
 }
