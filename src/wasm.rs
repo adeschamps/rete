@@ -63,6 +63,7 @@ impl Rete {
     #[cfg(feature = "trace")]
     pub fn observe(&mut self, observer: Observer) {
         self.observers.push(observer);
+        self.dispatch();
     }
 
     /// Insert a WME into the rete.
@@ -83,6 +84,11 @@ impl Rete {
         self.inner.remove_wme(wme);
 
         self.dispatch();
+    }
+
+    /// Add a production to the rete.
+    pub fn add_production(&mut self) {
+        unimplemented!()
     }
 
     /// Remove the production with the given id.
