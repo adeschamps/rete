@@ -1,4 +1,4 @@
-//! Web assembly bindings to the rete. Requires the `rete` feature.
+//! Web assembly bindings to the rete. Requires `target_arch = "wasm32"`.
 
 #[cfg(feature = "trace")]
 use std::sync::{Arc, Mutex};
@@ -55,6 +55,11 @@ impl Rete {
 
     /// Register an object that will receive callbacks whenever events
     /// occur in the rete. Requires the `trace` feature.
+    ///
+    /// The `observer` should be an object with a `on_event` function
+    /// which takes a string is its sole argument. This string can be
+    /// parsed as JSON and interpreted according to the `Trace`
+    /// type.
     #[cfg(feature = "trace")]
     pub fn observe(&mut self, observer: Observer) {
         self.observers.push(observer);
@@ -88,6 +93,11 @@ impl Rete {
         self.dispatch();
     }
 
+    /// Notify all observers of recent events. They are passed a JSON
+    /// string, which should be parsed on the JavaScript side
+    /// according to the definition of the `Trace` enum.
+    ///
+    /// If the `trace` feature is not enabled, then this is a no-op.
     fn dispatch(&mut self) {
         #[cfg(feature = "trace")]
         for msg in self.events.lock().unwrap().drain(..) {
@@ -99,8 +109,11 @@ impl Rete {
     }
 }
 
+#[cfg(feature = "trace")]
 #[wasm_bindgen]
 extern "C" {
+    /// Binding to an object that will receive rete events. Requires
+    /// the `trace` feature.
     #[wasm_bindgen(js_name = "Observer")]
     pub type Observer;
 
