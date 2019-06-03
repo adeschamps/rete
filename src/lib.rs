@@ -28,6 +28,13 @@ use trace::Trace;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
+macro_rules! observe {
+    ($log:ident, $event:expr) => {
+        #[cfg(feature = "trace")]
+        info!($log, "trace event"; $event);
+    }
+}
+
 /// The type used to represent symbols. This may become a generic type parameter in the future.
 pub type SymbolID = usize;
 
@@ -136,8 +143,13 @@ impl Rete {
             _ => unreachable!("this is definitely a beta node"),
         }
 
-        #[cfg(feature = "trace")]
-        info!(log, "init"; Trace::Initialized);
+        observe!(
+            log,
+            Trace::Initialized {
+                dummy_node_id: dummy_node_id.index(),
+                dummy_token_id: dummy_token_id.index(),
+            }
+        );
 
         Rete {
             log,
@@ -166,8 +178,7 @@ impl Rete {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "add wme");
 
-        #[cfg(feature = "trace")]
-        info!(log, "add wme"; Trace::AddedWme { id: 0 });
+        observe!(log, Trace::AddedWme { id: 0 });
 
         #[rustfmt::skip]
         let tests = [
@@ -281,8 +292,12 @@ impl Rete {
         let log = self.log.new(o!("production_id" => production.id.0));
         trace!(log, "add production"; "production" => ?production);
 
-        #[cfg(feature = "trace")]
-        info!(log, "add production"; Trace::AddedProduction { id: production.id.0 });
+        observe!(
+            log,
+            Trace::AddedProduction {
+                id: production.id.0
+            }
+        );
 
         let mut current_node_id = self.dummy_node_id;
 
@@ -374,8 +389,14 @@ impl Rete {
                     self.beta_network.add_edge(current_node_id, id, ());
                     trace!(log, "create join node"; "id" => ?id);
 
-                    #[cfg(feature = "trace")]
-                    info!(log,"add node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::Join });
+                    observe!(
+                        log,
+                        Trace::AddedNode {
+                            id: id.index(),
+                            parent_id: current_node_id.index(),
+                            kind: trace::NodeKind::Join
+                        }
+                    );
 
                     // link to alpha memory
                     self.alpha_network
@@ -402,8 +423,14 @@ impl Rete {
                         self.beta_network.add_edge(current_node_id, id, ());
                         trace!(log, "create beta memory"; "id" => ?id);
 
-                        #[cfg(feature = "trace")]
-                        info!(log, "add node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::Beta });
+                        observe!(
+                            log,
+                            Trace::AddedNode {
+                                id: id.index(),
+                                parent_id: current_node_id.index(),
+                                kind: trace::NodeKind::Beta
+                            }
+                        );
 
                         self.activate_new_node(log.clone(), current_node_id, id);
 
@@ -425,8 +452,14 @@ impl Rete {
         self.activate_new_node(log.clone(), current_node_id, id);
         trace!(log, "new p node"; "id" => ?id);
 
-        #[cfg(feature = "trace")]
-        info!(log, "new p node"; Trace::AddedNode{ id: id.index(), parent_id: current_node_id.index(), kind: trace::NodeKind::P });
+        observe!(
+            log,
+            Trace::AddedNode {
+                id: id.index(),
+                parent_id: current_node_id.index(),
+                kind: trace::NodeKind::P
+            }
+        );
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {

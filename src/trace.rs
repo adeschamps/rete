@@ -12,7 +12,11 @@ use std::fmt;
 #[serde(tag = "type")]
 pub enum Trace {
     /// Emitted once when a rete is constructed.
-    Initialized,
+    #[serde(rename_all = "camelCase")]
+    Initialized {
+        dummy_node_id: usize,
+        dummy_token_id: usize,
+    },
     /// A WME was inserted into working memory.
     #[serde(rename_all = "camelCase")]
     AddedWme { id: usize },
