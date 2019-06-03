@@ -14,28 +14,36 @@ pub enum Trace {
     /// Emitted once when a rete is constructed.
     Initialized,
     /// A WME was inserted into working memory.
+    #[serde(rename_all = "camelCase")]
     AddedWme { id: usize },
     /// A WME was removed from working memory.
+    #[serde(rename_all = "camelCase")]
     RemovedWme { id: usize },
     /// A production was added to the rete.
+    #[serde(rename_all = "camelCase")]
     AddedProduction { id: usize },
     /// A production was removed from the rete.
+    #[serde(rename_all = "camelCase")]
     RemovedProduction { id: usize },
     /// A token was created in a beta node.
+    #[serde(rename_all = "camelCase")]
     AddedToken {
         node_id: usize,
         token_id: usize,
         parent_token_id: usize,
     },
     /// A token was removed from a beta node.
+    #[serde(rename_all = "camelCase")]
     RemovedToken { token_id: usize },
     /// A node was created in the rete network.
+    #[serde(rename_all = "camelCase")]
     AddedNode {
         id: usize,
         parent_id: usize,
         kind: NodeKind,
     },
     /// A node was removed from the rete network.
+    #[serde(rename_all = "camelCase")]
     RemovedNode { id: usize },
 }
 
