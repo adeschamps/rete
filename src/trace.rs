@@ -19,13 +19,18 @@ pub enum Trace {
     },
     /// A WME was inserted into working memory.
     #[serde(rename_all = "camelCase")]
-    AddedWme { id: usize },
+    AddedWme {
+        timetag: usize,
+        id: usize,
+        attribute: usize,
+        value: usize,
+    },
     /// A WME was removed from working memory.
     #[serde(rename_all = "camelCase")]
     RemovedWme { id: usize },
     /// A production was added to the rete.
     #[serde(rename_all = "camelCase")]
-    AddedProduction { id: usize },
+    AddedProduction { id: usize, pNodeId: usize },
     /// A production was removed from the rete.
     #[serde(rename_all = "camelCase")]
     RemovedProduction { id: usize },
@@ -45,10 +50,19 @@ pub enum Trace {
         id: usize,
         parent_id: usize,
         kind: NodeKind,
+        // TODO: Is this needed?
+        children: Vec<usize>,
+        alpha_node_id: Option<usize>,
     },
     /// A node was removed from the rete network.
     #[serde(rename_all = "camelCase")]
     RemovedNode { id: usize },
+    /// An alpha memory was created.
+    #[serde(rename_all = "camelCase")]
+    AddedAlphaMemory { id: usize },
+    /// An alpha memory was removed.
+    #[serde(rename_all = "camelCase")]
+    RemovedAlphaMemory { id: usize },
 }
 
 /// The different kinds of nodes that can exist in the rete network.

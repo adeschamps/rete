@@ -178,7 +178,15 @@ impl Rete {
         let log = self.log.new(o!("wme" => format!("{:?}", wme)));
         trace!(log, "add wme");
 
-        observe!(log, Trace::AddedWme { id: 0 });
+        observe!(
+            log,
+            Trace::AddedWme {
+                timetag: 0,
+                id: wme.0[0],
+                attribute: wme.0[1],
+                value: wme.0[2],
+            }
+        );
 
         #[rustfmt::skip]
         let tests = [
@@ -292,13 +300,6 @@ impl Rete {
         let log = self.log.new(o!("production_id" => production.id.0));
         trace!(log, "add production"; "production" => ?production);
 
-        observe!(
-            log,
-            Trace::AddedProduction {
-                id: production.id.0
-            }
-        );
-
         let mut current_node_id = self.dummy_node_id;
 
         for i in 0..production.conditions.len() {
@@ -364,6 +365,13 @@ impl Rete {
 
                 self.alpha_tests.insert(alpha_test, memory.id);
                 self.alpha_network.insert(memory.id, memory);
+
+                observe!(
+                    log,
+                    Trace::AddedAlphaMemory {
+                        id: alpha_memory_id.0,
+                    }
+                );
             }
             let alpha_memory = &self.alpha_network[&alpha_memory_id];
 
@@ -394,7 +402,9 @@ impl Rete {
                         Trace::AddedNode {
                             id: id.index(),
                             parent_id: current_node_id.index(),
-                            kind: trace::NodeKind::Join
+                            kind: trace::NodeKind::Join,
+                            children: vec![],
+                            alpha_node_id: Some(alpha_memory_id.0),
                         }
                     );
 
@@ -428,7 +438,9 @@ impl Rete {
                             Trace::AddedNode {
                                 id: id.index(),
                                 parent_id: current_node_id.index(),
-                                kind: trace::NodeKind::Beta
+                                kind: trace::NodeKind::Beta,
+                                children: vec![],
+                                alpha_node_id: None,
                             }
                         );
 
@@ -449,7 +461,9 @@ impl Rete {
         let id = self.beta_network.add_node(new_node);
         trace!(log, "create p node"; "id" => ?id);
         self.beta_network.add_edge(current_node_id, id, ());
-        self.activate_new_node(log.clone(), current_node_id, id);
+        if current_node_id != self.dummy_node_id {
+            self.activate_new_node(log.clone(), current_node_id, id);
+        }
         trace!(log, "new p node"; "id" => ?id);
 
         observe!(
@@ -457,7 +471,17 @@ impl Rete {
             Trace::AddedNode {
                 id: id.index(),
                 parent_id: current_node_id.index(),
-                kind: trace::NodeKind::P
+                kind: trace::NodeKind::P,
+                children: vec![],
+                alpha_node_id: None,
+            }
+        );
+
+        observe!(
+            log,
+            Trace::AddedProduction {
+                id: production.id.0,
+                pNodeId: id.index(),
             }
         );
     }
