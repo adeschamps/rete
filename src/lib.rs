@@ -300,6 +300,11 @@ impl Rete {
         let log = self.log.new(o!("production_id" => production.id.0));
         trace!(log, "add production"; "production" => ?production);
 
+        if production.conditions.is_empty() {
+            error!(log, "production has no conditions");
+            return;
+        }
+
         let mut current_node_id = self.dummy_node_id;
 
         for i in 0..production.conditions.len() {
