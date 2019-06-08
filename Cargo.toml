@@ -28,4 +28,3 @@ slog-term = "2.4.0"
 [features]
 default = []
 trace = ["erased-serde", "serde"]
-# wasm = ["console_error_panic_hook", "serde_json", "wasm-bindgen"]
