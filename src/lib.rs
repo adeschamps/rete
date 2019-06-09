@@ -486,7 +486,7 @@ impl Rete {
             log,
             Trace::AddedProduction {
                 id: production.id.0,
-                pNodeId: id.index(),
+                p_node_id: id.index(),
             }
         );
     }

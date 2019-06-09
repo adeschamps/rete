@@ -30,7 +30,7 @@ pub enum Trace {
     RemovedWme { id: usize },
     /// A production was added to the rete.
     #[serde(rename_all = "camelCase")]
-    AddedProduction { id: usize, pNodeId: usize },
+    AddedProduction { id: usize, p_node_id: usize },
     /// A production was removed from the rete.
     #[serde(rename_all = "camelCase")]
     RemovedProduction { id: usize },
