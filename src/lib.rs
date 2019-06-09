@@ -15,7 +15,7 @@ use petgraph::{
 };
 use slog::{Drain, Logger};
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -63,7 +63,7 @@ pub struct Rete {
     dummy_node_id: ReteNodeId,
     tokens: StableGraph<Token, (), Directed>,
 
-    productions: HashMap<ProductionID, Production>,
+    productions: HashMap<ProductionID, ReteNodeId>,
 
     /// Whenever a WME is added to an alpha memory, the alpha memory
     /// is added to this collection. This makes removals more
@@ -466,6 +466,7 @@ impl Rete {
         let id = self.beta_network.add_node(new_node);
         trace!(log, "create p node"; "id" => ?id);
         self.beta_network.add_edge(current_node_id, id, ());
+        self.productions.insert(production.id, id);
         if current_node_id != self.dummy_node_id {
             self.activate_new_node(log.clone(), current_node_id, id);
         }
@@ -495,8 +496,57 @@ impl Rete {
         let log = self.log.clone();
         trace!(log, "remove production: {:?}", id);
 
+        let mut current_node_id = match self.productions.remove(&id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        while current_node_id != self.dummy_node_id
+            && self.beta_network.neighbors(current_node_id).count() == 0
+        {
+            match self.beta_network[current_node_id] {
+                ReteNode::Join { alpha_memory, .. } => {
+                    match self.alpha_network.entry(alpha_memory) {
+                        Entry::Occupied(mut alpha_node) => {
+                            let index = alpha_node
+                                .get()
+                                .successors
+                                .iter()
+                                .position(|&id| id == current_node_id)
+                                .expect("Alpha <-> join links are not consistent");
+                            alpha_node.get_mut().successors.remove(index);
+                            if alpha_node.get().successors.is_empty() {
+                                alpha_node.remove();
+
+                                observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
+                            }
+                        }
+                        Entry::Vacant(_) => panic!("Join node's alpha memory does not exist"),
+                    }
+                }
+                _ => {}
+            }
+
+            let parent = self
+                .beta_network
+                .neighbors_directed(current_node_id, Direction::Incoming)
+                .next()
+                .expect("Node should have a parent");
+            self.beta_network.remove_node(current_node_id);
+
+            observe!(
+                log,
+                Trace::RemovedNode {
+                    id: current_node_id.index()
+                }
+            );
+
+            current_node_id = parent;
+        }
+
         self.productions.remove(&id);
-        unimplemented!()
+
+        observe!(log, Trace::RemovedProduction { id: id.0 });
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
@@ -1057,6 +1107,24 @@ mod tests {
 
             assert!(rete.wme_alpha_memories.is_empty());
             assert!(rete.wme_tokens.is_empty());
+        }
+
+        #[test]
+        fn remove_productions() {
+            let log = init();
+
+            let mut rete = Rete::new(log);
+
+            for p in productions() {
+                rete.add_production(p);
+            }
+            for p in productions() {
+                rete.remove_production(p.id);
+            }
+
+            assert!(rete.productions.is_empty());
+            assert!(rete.alpha_network.is_empty());
+            assert_eq!(rete.beta_network.node_count(), 1);
         }
 
         #[test]
