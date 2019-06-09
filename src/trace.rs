@@ -59,7 +59,7 @@ pub enum Trace {
     RemovedNode { id: usize },
     /// An alpha memory was created.
     #[serde(rename_all = "camelCase")]
-    AddedAlphaMemory { id: usize },
+    AddedAlphaMemory { id: usize, test: AlphaMemoryTest },
     /// An alpha memory was removed.
     #[serde(rename_all = "camelCase")]
     RemovedAlphaMemory { id: usize },
@@ -72,6 +72,14 @@ pub enum NodeKind {
     Beta,
     Join,
     P,
+}
+
+/// The symbol IDs of the test that an alpha memory is performing.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct AlphaMemoryTest {
+    pub id: Option<usize>,
+    pub attribute: Option<usize>,
+    pub value: Option<usize>,
 }
 
 impl Trace {

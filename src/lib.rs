@@ -375,6 +375,11 @@ impl Rete {
                     log,
                     Trace::AddedAlphaMemory {
                         id: alpha_memory_id.0,
+                        test: trace::AlphaMemoryTest {
+                            id: alpha_test.0[0],
+                            attribute: alpha_test.0[1],
+                            value: alpha_test.0[2],
+                        }
                     }
                 );
             }
