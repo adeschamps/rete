@@ -1,6 +1,5 @@
 //! Web assembly bindings to the rete. Requires `target_arch = "wasm32"`.
 
-use std::collections::HashMap;
 #[cfg(feature = "trace")]
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
@@ -10,7 +9,6 @@ use wasm_bindgen::prelude::*;
 pub struct Rete {
     inner: crate::Rete,
     wmes: Vec<crate::Wme>,
-    symbols: HashMap<String, usize>,
     #[cfg(feature = "trace")]
     events: Arc<Mutex<Vec<crate::trace::Trace>>>,
     #[cfg(feature = "trace")]
@@ -41,7 +39,6 @@ impl Rete {
             Self {
                 inner: crate::Rete::new(log),
                 wmes: vec![],
-                symbols: HashMap::new(),
                 events,
                 observers: vec![],
             }
@@ -51,7 +48,6 @@ impl Rete {
         let rete = Self {
             inner: crate::Rete::new(None),
             wmes: vec![],
-            symbols: HashMap::new(),
         };
 
         rete
@@ -71,17 +67,7 @@ impl Rete {
     }
 
     /// Insert a WME into the rete.
-    pub fn add_wme(&mut self, id: String, attribute: String, value: String) -> usize {
-        let mut make_symbol = |test| {
-            let next_id = self.symbols.len();
-            let id = *self.symbols.entry(test).or_insert(next_id);
-            id
-        };
-
-        let id = make_symbol(id);
-        let attribute = make_symbol(attribute);
-        let value = make_symbol(value);
-
+    pub fn add_wme(&mut self, id: usize, attribute: usize, value: usize) -> usize {
         let wme = crate::Wme([id, attribute, value]);
         self.inner.add_wme(wme);
         let wme_id = self.wmes.len();
@@ -102,27 +88,13 @@ impl Rete {
 
     /// Add a production to the rete.
     pub fn add_production(&mut self, production: Production) {
-        let mut variables = HashMap::new();
-        let mut make_test = |test: String| {
-            if test.starts_with('<') && test.ends_with('>') {
-                let next_id = variables.len();
-                let id = *variables.entry(test).or_insert(next_id);
-                let id = crate::VariableID(id);
-                crate::ConditionTest::Variable(id)
-            } else {
-                let next_id = self.symbols.len();
-                let id = *self.symbols.entry(test).or_insert(next_id);
-                crate::ConditionTest::Constant(id)
-            }
-        };
-
         let conditions = production
             .conditions
             .iter()
             .map(|condition| {
-                let id = make_test(condition.id.clone());
-                let attribute = make_test(condition.attribute.clone());
-                let value = make_test(condition.value.clone());
+                let id = condition.id.into();
+                let attribute = condition.attribute.into();
+                let value = condition.value.into();
                 crate::Condition([id, attribute, value])
             })
             .collect();
@@ -183,19 +155,48 @@ impl Production {
 
 #[wasm_bindgen]
 pub struct Condition {
-    id: String,
-    attribute: String,
-    value: String,
+    id: Test,
+    attribute: Test,
+    value: Test,
 }
 
 #[wasm_bindgen]
 impl Condition {
     #[wasm_bindgen(constructor)]
-    pub fn new(id: String, attribute: String, value: String) -> Self {
+    pub fn new(id: Test, attribute: Test, value: Test) -> Self {
         Self {
             id,
             attribute,
             value,
+        }
+    }
+}
+
+#[wasm_bindgen]
+#[derive(Clone, Copy)]
+pub struct Test {
+    symbol: usize,
+    is_variable: bool,
+}
+
+#[wasm_bindgen]
+impl Test {
+    #[wasm_bindgen(constructor)]
+    pub fn new(symbol: usize, is_variable: bool) -> Self {
+        Self {
+            symbol,
+            is_variable,
+        }
+    }
+}
+
+impl Into<crate::ConditionTest> for Test {
+    fn into(self) -> crate::ConditionTest {
+        if self.is_variable {
+            let id = crate::VariableID(self.symbol);
+            crate::ConditionTest::Variable(id)
+        } else {
+            crate::ConditionTest::Constant(self.symbol)
         }
     }
 }
