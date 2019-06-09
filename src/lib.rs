@@ -493,8 +493,8 @@ impl Rete {
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
-        let log = self.log.clone();
-        trace!(log, "remove production: {:?}", id);
+        let log = self.log.new(o!("production" => id.0));
+        trace!(log, "remove production");
 
         let mut current_node_id = match self.productions.remove(&id) {
             Some(id) => id,
@@ -504,7 +504,20 @@ impl Rete {
         while current_node_id != self.dummy_node_id
             && self.beta_network.neighbors(current_node_id).count() == 0
         {
+            let log = log.new(o!("node" => current_node_id.index()));
             match self.beta_network[current_node_id] {
+                ReteNode::Beta { ref tokens } => {
+                    for token_id in tokens {
+                        self.tokens.remove_node(*token_id);
+                        trace!(log, "remove token"; "token" => token_id.index());
+                        observe!(
+                            log,
+                            Trace::RemovedToken {
+                                token_id: token_id.index()
+                            }
+                        );
+                    }
+                }
                 ReteNode::Join { alpha_memory, .. } => {
                     match self.alpha_network.entry(alpha_memory) {
                         Entry::Occupied(mut alpha_node) => {
@@ -517,14 +530,14 @@ impl Rete {
                             alpha_node.get_mut().successors.remove(index);
                             if alpha_node.get().successors.is_empty() {
                                 alpha_node.remove();
-
+                                trace!(log, "remove alpha memory"; "alpha memory" => alpha_memory.0);
                                 observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
                             }
                         }
                         Entry::Vacant(_) => panic!("Join node's alpha memory does not exist"),
                     }
                 }
-                _ => {}
+                ReteNode::P { .. } => {}
             }
 
             let parent = self
@@ -534,6 +547,7 @@ impl Rete {
                 .expect("Node should have a parent");
             self.beta_network.remove_node(current_node_id);
 
+            trace!(log, "remove node");
             observe!(
                 log,
                 Trace::RemovedNode {
@@ -1125,6 +1139,26 @@ mod tests {
             assert!(rete.productions.is_empty());
             assert!(rete.alpha_network.is_empty());
             assert_eq!(rete.beta_network.node_count(), 1);
+        }
+
+        #[test]
+        fn remove_productions_with_wmes() {
+            let log = init();
+
+            let mut rete = Rete::new(log);
+
+            for p in productions() {
+                rete.add_production(p);
+            }
+            for wme in wmes() {
+                rete.add_wme(wme);
+            }
+            for p in productions() {
+                rete.remove_production(p.id);
+            }
+
+            // The rete should just contain the dummy token.
+            assert_eq!(rete.tokens.node_count(), 1);
         }
 
         #[test]
