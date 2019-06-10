@@ -43,7 +43,7 @@ pub enum Trace {
     },
     /// A token was removed from a beta node.
     #[serde(rename_all = "camelCase")]
-    RemovedToken { token_id: usize },
+    RemovedToken { id: usize },
     /// A node was created in the rete network.
     #[serde(rename_all = "camelCase")]
     AddedNode {

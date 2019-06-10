@@ -518,7 +518,7 @@ impl Rete {
                         observe!(
                             log,
                             Trace::RemovedToken {
-                                token_id: token_id.index()
+                                id: token_id.index()
                             }
                         );
                     }
