@@ -473,9 +473,6 @@ impl Rete {
         trace!(log, "create p node"; "id" => ?id);
         self.beta_network.add_edge(current_node_id, id, ());
         self.productions.insert(production.id, id);
-        if current_node_id != self.dummy_node_id {
-            self.activate_new_node(log.clone(), current_node_id, id);
-        }
         trace!(log, "new p node"; "id" => ?id);
 
         observe!(
@@ -496,6 +493,10 @@ impl Rete {
                 p_node_id: id.index(),
             }
         );
+
+        if current_node_id != self.dummy_node_id {
+            self.activate_new_node(log.clone(), current_node_id, id);
+        }
     }
 
     pub fn remove_production(&mut self, id: ProductionID) {
