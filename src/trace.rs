@@ -37,9 +37,9 @@ pub enum Trace {
     /// A token was created in a beta node.
     #[serde(rename_all = "camelCase")]
     AddedToken {
+        id: usize,
         node_id: usize,
-        token_id: usize,
-        parent_token_id: usize,
+        parent_id: usize,
     },
     /// A token was removed from a beta node.
     #[serde(rename_all = "camelCase")]
@@ -63,6 +63,12 @@ pub enum Trace {
     /// An alpha memory was removed.
     #[serde(rename_all = "camelCase")]
     RemovedAlphaMemory { id: usize },
+    /// A production was matched.
+    #[serde(rename_all = "camelCase")]
+    MatchedProduction { id: usize, token: usize },
+    /// A production match was retracted.
+    #[serde(rename_all = "camelCase")]
+    UnmatchedProduction { id: usize, token: usize },
 }
 
 /// The different kinds of nodes that can exist in the rete network.

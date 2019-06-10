@@ -622,6 +622,14 @@ impl Rete {
                     trace!(log, "new token"; "token" => ?new_token);
                     let new_token_id = self.tokens.add_node(new_token);
                     self.tokens.add_edge(new_token_id, *token, ());
+                    observe!(
+                        log,
+                        Trace::AddedToken {
+                            id: new_token_id.index(),
+                            node_id: new_token.node.index(),
+                            parent_id: token.index(),
+                        }
+                    );
                     new_tokens.push(new_token_id);
                     self.wme_tokens.get_mut(wme).unwrap().push(new_token_id);
                     let new_activations: Vec<_> = self
@@ -666,6 +674,13 @@ impl Rete {
                     info!(log, "Activated P node"; "production" => ?production);
                     self.events.push(Event::Fired(*production));
                     activations.push((activation.node, token));
+                    observe!(
+                        log,
+                        Trace::MatchedProduction {
+                            id: production.0,
+                            token: token.index(),
+                        }
+                    );
                 }
 
                 (ActivationKind::Right(_), ReteNode::Beta { .. }) => {
