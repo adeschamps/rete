@@ -362,6 +362,7 @@ impl Rete {
                     id: alpha_memory_id,
                     wmes,
                     successors: vec![],
+                    test: alpha_test,
                 };
                 trace!(log, "created alpha memory";
                     "test" => ?alpha_test,
@@ -537,7 +538,8 @@ impl Rete {
                         .expect("Alpha <-> join links are not consistent");
                     alpha_node.get_mut().successors.remove(index);
                     if alpha_node.get().successors.is_empty() {
-                        alpha_node.remove();
+                        let memory = alpha_node.remove();
+                        self.alpha_tests.remove(&memory.test);
                         trace!(log, "remove alpha memory"; "alpha memory" => alpha_memory.0);
                         observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
                     }
@@ -870,6 +872,7 @@ struct AlphaMemory {
     // Also called `items` in the Doorenbos thesis.
     wmes: Vec<Wme>,
     successors: Vec<ReteNodeId>,
+    test: AlphaTest,
 }
 
 //////////
@@ -1185,6 +1188,25 @@ mod tests {
         #[ignore]
         fn duplicate_tokens() {
             unimplemented!()
+        }
+
+        #[test]
+        fn alpha_tests_cleared() {
+            let log = init();
+
+            let mut rete = Rete::new(log);
+
+            for p in productions() {
+                rete.add_production(p);
+            }
+            for p in productions() {
+                rete.remove_production(p.id);
+            }
+            for wme in wmes() {
+                rete.add_wme(wme);
+            }
+
+            assert!(rete.alpha_tests.is_empty());
         }
     }
 }
