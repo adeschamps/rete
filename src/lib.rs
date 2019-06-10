@@ -524,22 +524,22 @@ impl Rete {
                     }
                 }
                 ReteNode::Join { alpha_memory, .. } => {
-                    match self.alpha_network.entry(alpha_memory) {
-                        Entry::Occupied(mut alpha_node) => {
-                            let index = alpha_node
-                                .get()
-                                .successors
-                                .iter()
-                                .position(|&id| id == current_node_id)
-                                .expect("Alpha <-> join links are not consistent");
-                            alpha_node.get_mut().successors.remove(index);
-                            if alpha_node.get().successors.is_empty() {
-                                alpha_node.remove();
-                                trace!(log, "remove alpha memory"; "alpha memory" => alpha_memory.0);
-                                observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
-                            }
-                        }
+                    let mut alpha_node = match self.alpha_network.entry(alpha_memory) {
+                        Entry::Occupied(alpha_node) => alpha_node,
                         Entry::Vacant(_) => panic!("Join node's alpha memory does not exist"),
+                    };
+
+                    let index = alpha_node
+                        .get()
+                        .successors
+                        .iter()
+                        .position(|&id| id == current_node_id)
+                        .expect("Alpha <-> join links are not consistent");
+                    alpha_node.get_mut().successors.remove(index);
+                    if alpha_node.get().successors.is_empty() {
+                        alpha_node.remove();
+                        trace!(log, "remove alpha memory"; "alpha memory" => alpha_memory.0);
+                        observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
                     }
                 }
                 ReteNode::P { .. } => {}
