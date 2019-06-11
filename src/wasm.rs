@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! Web assembly bindings to the rete. Requires `target_arch = "wasm32"`.
 
 #[cfg(feature = "trace")]
@@ -132,14 +134,17 @@ impl Rete {
     }
 }
 
+/// A complete production.
 #[wasm_bindgen]
 pub struct Production {
-    pub id: usize,
+    id: usize,
     conditions: Vec<Condition>,
 }
 
 #[wasm_bindgen]
 impl Production {
+    /// Construct a new production with an ID but no conditions. Add
+    /// conditions using the `add_condition` method.
     #[wasm_bindgen(constructor)]
     pub fn new(id: usize) -> Self {
         Self {
@@ -148,11 +153,13 @@ impl Production {
         }
     }
 
+    /// Add a condition to the production.
     pub fn add_condition(&mut self, condition: Condition) {
         self.conditions.push(condition);
     }
 }
 
+/// A condition test for a single WME.
 #[wasm_bindgen]
 pub struct Condition {
     id: Test,
@@ -162,6 +169,8 @@ pub struct Condition {
 
 #[wasm_bindgen]
 impl Condition {
+    /// Construct a new condition that tests an id, attribute, and
+    /// value.
     #[wasm_bindgen(constructor)]
     pub fn new(id: Test, attribute: Test, value: Test) -> Self {
         Self {
@@ -172,6 +181,13 @@ impl Condition {
     }
 }
 
+/// A test for a single symbol.
+///
+/// Tests can be either a value test or a variable binding. For value
+/// tests, the ID is relative to all the other symbols in the Rete.
+/// For variable tests, the ID is relative to other variables within
+/// the same production; that is, multiple productions can reuse the
+/// same variable IDs.
 #[wasm_bindgen]
 #[derive(Clone, Copy)]
 pub struct Test {
@@ -181,6 +197,10 @@ pub struct Test {
 
 #[wasm_bindgen]
 impl Test {
+    /// Construct a new value test. The first parameter is either a
+    /// symbol ID (scoped to the Rete) or a variable ID (scoped to the
+    /// production). The second parameter indicates which type of test
+    /// this is.
     #[wasm_bindgen(constructor)]
     pub fn new(symbol: usize, is_variable: bool) -> Self {
         Self {
