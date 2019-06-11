@@ -202,10 +202,30 @@ impl Test {
     /// production). The second parameter indicates which type of test
     /// this is.
     #[wasm_bindgen(constructor)]
+    #[deprecated = "Use the `Test::symbol` and `Test::variable` constructors instead."]
     pub fn new(symbol: usize, is_variable: bool) -> Self {
         Self {
             symbol,
             is_variable,
+        }
+    }
+
+    /// Construct a new test for a constant symbol. Symbol IDs within
+    /// the same Rete refer to the same values.
+    pub fn symbol(symbol: usize) -> Self {
+        Self {
+            symbol,
+            is_variable: false,
+        }
+    }
+
+    /// Construct a new test for a variable. Variable IDs are scoped
+    /// to a production; IDs within the same production must match,
+    /// but different productions can reuse the same variable IDs.
+    pub fn variable(id: usize) -> Self {
+        Self {
+            symbol: id,
+            is_variable: true,
         }
     }
 }
