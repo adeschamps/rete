@@ -6,12 +6,12 @@ This is a Rust implementation of the [Rete pattern matching
 algorithm][wiki]. It is based largely on the paper [_Production
 Matching for Large Learning Systems_][Doorenbos] by Robert Doorenbos, but adapted to be more idiomatic Rust.
 
-It is currently incomplete. Basic features are in progress:
+It is currently incomplete. Basic features work:
 
 - [x] Production addition
-- [ ] Production removal
+- [x] Production removal
 - [x] Wme addition
-- [ ] Wme removal
+- [x] Wme removal
 
 Additionally, it only handles equality checks (no numeric comparisons) and it does not yet handle negated conditions.
 
