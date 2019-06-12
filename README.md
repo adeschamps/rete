@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.com/adeschamps/rete.svg?branch=master)](https://travis-ci.com/adeschamps/rete)
+
 # Rete
 
 This is a Rust implementation of the [Rete pattern matching
