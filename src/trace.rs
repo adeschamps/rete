@@ -129,9 +129,6 @@ pub enum Trace {
 /// The different kinds of nodes that can exist in the rete network.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum NodeKind {
-    /// An alpha node.
-    #[deprecated = "Alpha nodes have their own trace type"]
-    Alpha,
     /// A beta node.
     Beta,
     /// A join node.
