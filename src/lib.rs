@@ -1271,5 +1271,21 @@ mod tests {
         fn duplicate_production_ids() {
             unimplemented!("Inserting multiple productions with the same ID shouldn't be allowed.")
         }
+
+        /// We want to make sure that there's no memory tradeoff by
+        /// using `StableGraph` (which stores `Option<N>`) instead of
+        /// `Graph` (which stores nodes directly).
+        ///
+        /// As long as our node types have "holes" in them, the
+        /// compiler can find somewhere to put `Option`'s
+        /// discriminant. For alpha memories this is probably inside
+        /// `Vec`'s pointer, and in rete nodes it's probably inside
+        /// the enum's discriminant.
+        #[test]
+        fn node_type_memory_layout() {
+            use std::mem::size_of;
+            assert_eq!(size_of::<AlphaMemory>(), size_of::<Option<AlphaMemory>>());
+            assert_eq!(size_of::<ReteNode>(), size_of::<Option<ReteNode>>());
+        }
     }
 }
