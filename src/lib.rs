@@ -1,10 +1,9 @@
 //! This crate implements the rete pattern matching algorithm.
 //!
-//! The rete is a data structure and algorithm for efficiently
-//! detecting a large number of specific patterns in a graph
-//! structure. The implementation here is based largely on Robert
-//! Doorenbos' thesis, "Production Matching for Large Learning
-//! Systems".
+//! Rete is a data structure and algorithm for efficiently detecting a
+//! large number of specific patterns in a graph structure. The
+//! implementation here is based largely on Robert Doorenbos' thesis,
+//! "Production Matching for Large Learning Systems".
 
 #[macro_use]
 extern crate slog;
@@ -85,9 +84,14 @@ pub struct Rete {
     id_generator: IdGenerator,
 }
 
+/// An event that occurred in the Rete. The Rete accumulates a list of
+/// events, which can be retrieved with the `Rete::take_events`
+/// function.
 #[derive(Debug, PartialEq)]
 pub enum Event {
+    /// The production with the given ID matched.
     Fired(ProductionID),
+    /// The production with the given ID no longer matches.
     Retracted(ProductionID),
 }
 
@@ -571,6 +575,8 @@ impl Rete {
         observe!(log, Trace::RemovedProduction { id: id.0 });
     }
 
+    /// Consume the list of events that have fired since the last this
+    /// function was called.
     pub fn take_events(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         std::mem::swap(&mut events, &mut self.events);
@@ -915,24 +921,38 @@ struct Token {
 
 //////////
 
+/// A unique idenifier for a production.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProductionID(pub usize);
 
+/// A production is a pattern that the Rete will search for in the
+/// working memory graph.
 #[derive(Debug)]
 pub struct Production {
+    /// A unique identifier for this production.
     pub id: ProductionID,
+    /// A list of conditions for this production to match.
     pub conditions: Vec<Condition>,
 }
 
+/// A condition for matching a single WME in the Rete.
 #[derive(Clone, Copy, Debug)]
 pub struct Condition(pub [ConditionTest; 3]);
 
+/// An identifier for variables within a production. If a variable
+/// appears multiple times within a production, then its bindings must
+/// be consistent. Variable IDs in different productions are not
+/// related.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VariableID(pub usize);
 
+/// A test for a single symbol.
 #[derive(Clone, Copy, Debug)]
 pub enum ConditionTest {
+    /// Test for a symbol with the given ID.
     Constant(SymbolID),
+    /// Test for any symbol, as long as it is the same symbol as other
+    /// conditions with the same ID within a production.
     Variable(VariableID),
 }
 
