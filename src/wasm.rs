@@ -195,19 +195,6 @@ pub struct Test {
 
 #[wasm_bindgen]
 impl Test {
-    /// Construct a new value test. The first parameter is either a
-    /// symbol ID (scoped to the Rete) or a variable ID (scoped to the
-    /// production). The second parameter indicates which type of test
-    /// this is.
-    #[wasm_bindgen(constructor)]
-    #[deprecated = "Use the `Test::symbol` and `Test::variable` constructors instead."]
-    pub fn new(symbol: usize, is_variable: bool) -> Self {
-        Self {
-            symbol,
-            is_variable,
-        }
-    }
-
     /// Construct a new test for a constant symbol. Symbol IDs within
     /// the same Rete refer to the same values.
     pub fn symbol(symbol: usize) -> Self {
