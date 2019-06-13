@@ -503,6 +503,27 @@ impl Rete {
         }
     }
 
+    /// Remove a production from the Rete.
+    ///
+    /// ```
+    /// # use rete::*;
+    /// # use rete::ConditionTest::*;
+    /// let mut rete = Rete::default();
+    /// rete.add_production(Production {
+    ///     id: ProductionID(0),
+    ///     conditions: vec![
+    ///         Condition([Constant(0), Constant(1), Constant(2)])
+    ///     ]
+    /// });
+    /// rete.add_wme(Wme([0, 1, 2]));
+    ///
+    /// // The production now matches.
+    /// assert_eq!(rete.take_events(), vec![Event::Fired(ProductionID(0))]);
+    ///
+    /// // Removing a production causes it to retract.
+    /// rete.remove_production(ProductionID(0));
+    /// assert_eq!(rete.take_events(), vec![Event::Retracted(ProductionID(0))]);
+    /// ```
     pub fn remove_production(&mut self, id: ProductionID) {
         let log = self.log.new(o!("production" => id.0));
         trace!(log, "remove production");
@@ -549,7 +570,20 @@ impl Rete {
                         observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
                     }
                 }
-                ReteNode::P { .. } => {}
+                ReteNode::P {
+                    ref activations, ..
+                } => {
+                    for token_id in activations {
+                        self.events.push(Event::Retracted(id));
+                        observe!(
+                            log,
+                            Trace::UnmatchedProduction {
+                                id: id.0,
+                                token: token_id.index(),
+                            }
+                        );
+                    }
+                }
             }
 
             let parent = self
