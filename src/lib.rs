@@ -1263,5 +1263,11 @@ mod tests {
 
             assert!(rete.alpha_tests.is_empty());
         }
+
+        #[test]
+        #[ignore]
+        fn duplicate_production_ids() {
+            unimplemented!("Inserting multiple productions with the same ID shouldn't be allowed.")
+        }
     }
 }
