@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! This crate implements the rete pattern matching algorithm.
 //!
 //! Rete is a data structure and algorithm for efficiently detecting a

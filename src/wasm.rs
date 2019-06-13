@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 //! Web assembly bindings to the rete. Requires `target_arch = "wasm32"`.
 
 #[cfg(feature = "trace")]
