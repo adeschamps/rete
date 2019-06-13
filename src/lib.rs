@@ -1,11 +1,14 @@
 #![deny(missing_docs)]
 
-//! This crate implements the rete pattern matching algorithm.
+//! This crate implements the [Rete pattern matching algorithm][wiki].
 //!
 //! Rete is a data structure and algorithm for efficiently detecting a
 //! large number of specific patterns in a graph structure. The
 //! implementation here is based largely on Robert Doorenbos' thesis,
-//! "Production Matching for Large Learning Systems".
+//! ["Production Matching for Large Learning Systems"][Doorenbos].
+//!
+//! [wiki]: https://en.wikipedia.org/wiki/Rete_algorithm
+//! [Doorenbos]: http://reports-archive.adm.cs.cmu.edu/anon/1995/CMU-CS-95-113.pdf
 
 #[macro_use]
 extern crate slog;
@@ -975,10 +978,11 @@ pub struct Production {
 #[derive(Clone, Copy, Debug)]
 pub struct Condition(pub [ConditionTest; 3]);
 
-/// An identifier for variables within a production. If a variable
-/// appears multiple times within a production, then its bindings must
-/// be consistent. Variable IDs in different productions are not
-/// related.
+/// An identifier for variables within a production.
+///
+/// If a variable appears multiple times within a production, then its
+/// bindings must be consistent. Variable IDs in different productions
+/// are not related.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VariableID(pub usize);
 
