@@ -318,7 +318,7 @@ impl Rete {
 
         for i in 0..production.conditions.len() {
             let condition = production.conditions[i];
-            trace!(log, "add condition: {:?}", condition);
+            trace!(log, "add condition"; "condition" => ?condition);
 
             // get join tests from condition
             // NOTE: This does not handle intra-condition tests.
@@ -374,7 +374,7 @@ impl Rete {
                     test: alpha_test,
                 };
                 trace!(log, "created alpha memory";
-                    "test" => ?alpha_test,
+                    "test" => %alpha_test,
                     "id" => ?memory.id,
                     "wmes" => memory.wmes.len());
 
@@ -898,7 +898,7 @@ impl fmt::Display for AlphaTest {
             Some(symbol) => format!("{}", symbol),
             None => format!("*"),
         };
-        write!(f, "({}, {}, {})", t(self.0[0]), t(self.0[1]), t(self.0[2]))
+        write!(f, "({} ^{} {})", t(self.0[0]), t(self.0[1]), t(self.0[2]))
     }
 }
 
