@@ -22,8 +22,6 @@ pub enum Trace {
     /// A WME was inserted into working memory.
     #[serde(rename_all = "camelCase")]
     AddedWme {
-        /// The timetag of the new WME.
-        timetag: usize,
         /// The symbol ID of the WME's ID.
         id: usize,
         /// The symbol ID of the WME's attribute.
@@ -34,8 +32,12 @@ pub enum Trace {
     /// A WME was removed from working memory.
     #[serde(rename_all = "camelCase")]
     RemovedWme {
-        /// The timetag of the removed WME.
+        /// The symbol ID of the WME's ID.
         id: usize,
+        /// The symbol ID of the WME's attribute.
+        attribute: usize,
+        /// The symbol ID of the WME's value.
+        value: usize,
     },
     /// A production was added to the rete.
     #[serde(rename_all = "camelCase")]

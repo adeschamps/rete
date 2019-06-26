@@ -190,7 +190,6 @@ impl Rete {
         observe!(
             log,
             Trace::AddedWme {
-                timetag: 0,
                 id: wme.0[0],
                 attribute: wme.0[1],
                 value: wme.0[2],
@@ -273,9 +272,18 @@ impl Rete {
             let token = self.tokens.remove_node(token_id).unwrap();
             match self.beta_network[token.node] {
                 ReteNode::Beta { ref mut tokens } => tokens.retain(|t| *t != token_id),
-                _ => unreachable!("attempt to remove a WME from a non-beta node"),
+                _ => unreachable!("attempt to remove a token from a non-beta node"),
             }
         }
+
+        observe!(
+            log,
+            Trace::RemovedWme {
+                id: wme.0[0],
+                attribute: wme.0[1],
+                value: wme.0[2]
+            }
+        );
     }
 
     /// Add a production to the rete. No reordering of conitions is performed.
