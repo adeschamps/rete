@@ -587,6 +587,15 @@ impl Rete {
                     ref activations, ..
                 } => {
                     for token_id in activations {
+                        self.tokens.remove_node(*token_id);
+                        trace!(log, "remove token"; "token" => token_id.index());
+                        observe!(
+                            log,
+                            Trace::RemovedToken {
+                                id: token_id.index()
+                            }
+                        );
+
                         self.events.push(Event::Retracted(id));
                         observe!(
                             log,
@@ -668,7 +677,6 @@ impl Rete {
             let node = &self.beta_network[activation.node];
             trace!(log, "activating"; "remaining" => self.pending_activations.len());
             let mut new_tokens = vec![];
-            let mut activations = vec![];
             match (&activation.kind, &node) {
                 (ActivationKind::Left(wme, token), ReteNode::Beta { .. }) => {
                     let new_token = Token {
@@ -726,17 +734,26 @@ impl Rete {
                     self.pending_activations.extend(new_activations);
                 }
 
-                (ActivationKind::Left(_, token), ReteNode::P { production, .. }) => {
-                    info!(log, "Activated P node"; "production" => ?production);
-                    self.events.push(Event::Fired(*production));
-                    activations.push((activation.node, token));
+                (ActivationKind::Left(wme, token), ReteNode::P { production, .. }) => {
+                    let new_token = Token {
+                        wme: *wme,
+                        node: activation.node,
+                    };
+                    trace!(log, "new token"; "token" => ?new_token);
+                    let new_token_id = self.tokens.add_node(new_token);
+                    self.tokens.add_edge(new_token_id, *token, ());
                     observe!(
                         log,
-                        Trace::MatchedProduction {
-                            id: production.0,
-                            token: token.index(),
+                        Trace::AddedToken {
+                            id: new_token_id.index(),
+                            node_id: new_token.node.index(),
+                            parent_id: token.index()
                         }
                     );
+                    new_tokens.push(new_token_id);
+                    self.wme_tokens.get_mut(wme).unwrap().push(new_token_id);
+
+                    info!(log, "Activated P node"; "production" => ?production);
                 }
 
                 (ActivationKind::Right(_), ReteNode::Beta { .. }) => {
@@ -788,14 +805,21 @@ impl Rete {
             for new_token in new_tokens {
                 match &mut self.beta_network[activation.node] {
                     ReteNode::Beta { tokens } => tokens.insert(0, new_token),
-                    _ => unreachable!("tokens can only be stored in beta nodes"),
-                }
-            }
-
-            for (production, token) in activations {
-                match &mut self.beta_network[production] {
-                    ReteNode::P { activations, .. } => activations.push(*token),
-                    _ => unreachable!(),
+                    ReteNode::P {
+                        production,
+                        activations,
+                    } => {
+                        activations.insert(0, new_token);
+                        self.events.push(Event::Fired(*production));
+                        observe!(
+                            log,
+                            Trace::MatchedProduction {
+                                id: production.0,
+                                token: new_token.index(),
+                            }
+                        );
+                    }
+                    _ => unreachable!("tokens can only be stored in beta or p nodes"),
                 }
             }
         }
@@ -1197,6 +1221,13 @@ mod tests {
                 .take_events()
                 .iter()
                 .any(|event| *event == Event::Fired(ProductionID(1))));
+
+            let p_node = &rete.beta_network[rete.productions[&ProductionID(1)]];
+            let activations = match p_node {
+                ReteNode::P { activations, .. } => activations,
+                _ => panic!("This should be a p-node"),
+            };
+            assert_eq!(activations.len(), 1);
         }
 
         #[test]
