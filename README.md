@@ -1,4 +1,5 @@
 [![Build Status](https://travis-ci.com/adeschamps/rete.svg?branch=master)](https://travis-ci.com/adeschamps/rete)
+![Rust](https://github.com/adeschamps/rete/workflows/Rust/badge.svg)
 
 # Rete
 
