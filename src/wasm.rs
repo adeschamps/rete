@@ -1,7 +1,11 @@
 //! Web assembly bindings to the rete. Requires `target_arch = "wasm32"`.
 
 #[cfg(feature = "trace")]
+use crate::trace::Trace;
+#[cfg(feature = "trace")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "trace")]
+use tracing::{field, span};
 use wasm_bindgen::prelude::*;
 
 /// A wrapper around the rete that can be exposed to wasm.
@@ -24,20 +28,12 @@ impl Rete {
 
         #[cfg(feature = "trace")]
         let rete = {
-            use slog::Drain;
-
             let events: Arc<Mutex<Vec<crate::trace::Trace>>> = Arc::new(Mutex::new(vec![]));
 
-            let drain = crate::trace::ObserverDrain::new({
-                let events = events.clone();
-                move |msg| {
-                    events.lock().unwrap().push(msg.clone());
-                }
-            });
-            let log = slog::Logger::root(drain.fuse(), slog::o!());
+            tracing::subscriber::set_global_default(Subscriber::new(events.clone())).unwrap();
 
             Self {
-                inner: crate::Rete::new(log),
+                inner: crate::Rete::new(),
                 wmes: vec![],
                 events,
                 observers: vec![],
@@ -46,7 +42,7 @@ impl Rete {
 
         #[cfg(not(feature = "trace"))]
         let rete = Self {
-            inner: crate::Rete::new(None),
+            inner: crate::Rete::new(),
             wmes: vec![],
         };
 
@@ -239,4 +235,62 @@ extern "C" {
     /// `trace::Trace` enum.
     #[wasm_bindgen(method)]
     pub fn on_event(this: &Observer, event_json: &str);
+}
+
+#[cfg(feature = "trace")]
+struct Subscriber {
+    events: Arc<Mutex<Vec<crate::trace::Trace>>>,
+}
+
+#[cfg(feature = "trace")]
+struct Visit<'a> {
+    events: &'a mut Vec<Trace>,
+}
+
+#[cfg(feature = "trace")]
+impl Subscriber {
+    fn new(events: Arc<Mutex<Vec<crate::trace::Trace>>>) -> Self {
+        Subscriber { events }
+    }
+}
+
+#[cfg(feature = "trace")]
+impl tracing::Subscriber for Subscriber {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
+        span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        use std::ops::DerefMut;
+        let mut events = self.events.lock().unwrap();
+        let events = events.deref_mut();
+        let mut visitor = Visit { events };
+        event.record(&mut visitor);
+    }
+
+    fn enter(&self, _span: &span::Id) {}
+
+    fn exit(&self, _span: &span::Id) {}
+}
+
+#[cfg(feature = "trace")]
+impl field::Visit for Visit<'_> {
+    fn record_u64(&mut self, field: &field::Field, value: u64) {
+        if field.name() != "addr" {
+            return;
+        }
+
+        let event: &crate::trace::Trace = unsafe { &*(value as *const _) };
+        self.events.push(event.clone());
+    }
+
+    fn record_debug(&mut self, _field: &field::Field, _value: &dyn std::fmt::Debug) {}
 }

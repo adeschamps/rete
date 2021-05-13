@@ -11,13 +11,12 @@
 //! [Doorenbos]: http://reports-archive.adm.cs.cmu.edu/anon/1995/CMU-CS-95-113.pdf
 
 #[macro_use]
-extern crate slog;
+extern crate tracing;
 
 use petgraph::{
     stable_graph::{NodeIndex, StableGraph},
     Directed, Direction,
 };
-use slog::{Drain, Logger};
 use std::{
     collections::{hash_map::Entry, HashMap},
     fmt,
@@ -33,10 +32,15 @@ use trace::Trace;
 pub mod wasm;
 
 macro_rules! observe {
-    ($log:ident, $event:expr) => {
+    ($event:expr) => {
+        // Since we can't pass the trace event directly to the logger,
+        // we instead construct it on the stack and log its
+        // pointer. The subscriber will cast this back to a &Trace.
         #[cfg(feature = "trace")]
-        info!($log, "trace event"; $event);
-    }
+        let event: Trace = $event;
+        #[cfg(feature = "trace")]
+        info!(addr = (&event as *const _ as usize));
+    };
 }
 
 /// The type used to represent symbols. This may become a generic type parameter in the future.
@@ -60,7 +64,6 @@ impl IdGenerator {
 
 /// A patten matcher using the rete algorithm.
 pub struct Rete {
-    log: Logger,
     alpha_tests: HashMap<AlphaTest, AlphaMemoryId>,
     alpha_network: HashMap<AlphaMemoryId, AlphaMemory>,
     beta_network: StableGraph<ReteNode, (), Directed>,
@@ -114,7 +117,7 @@ enum ActivationKind {
 
 impl Default for Rete {
     fn default() -> Self {
-        Self::new(None)
+        Self::new()
     }
 }
 
@@ -126,14 +129,10 @@ impl Rete {
     /// ```
     /// # use rete::Rete;
     /// // Construct a rete that logs to standard log.
-    /// let rete = Rete::new(None);
+    /// let rete = Rete::new();
     /// ```
-    pub fn new(log: impl Into<Option<slog::Logger>>) -> Self {
-        let log = log.into().unwrap_or_else(|| {
-            let drain = slog_stdlog::StdLog;
-            Logger::root(drain.fuse(), o!())
-        });
-        info!(log, "constructing rete");
+    pub fn new() -> Self {
+        info!("constructing rete");
 
         let id_generator = IdGenerator::default();
 
@@ -152,16 +151,12 @@ impl Rete {
             _ => unreachable!("this is definitely a beta node"),
         }
 
-        observe!(
-            log,
-            Trace::Initialized {
-                dummy_node_id: dummy_node_id.index(),
-                dummy_token_id: dummy_token_id.index(),
-            }
-        );
+        observe!(Trace::Initialized {
+            dummy_node_id: dummy_node_id.index(),
+            dummy_token_id: dummy_token_id.index(),
+        });
 
         Rete {
-            log,
             alpha_tests: HashMap::new(),
             alpha_network: HashMap::new(),
             beta_network,
@@ -184,17 +179,13 @@ impl Rete {
     /// rete.add_wme(Wme([0, 1, 2]));
     /// ```
     pub fn add_wme(&mut self, wme: Wme) {
-        let log = self.log.new(o!("wme" => format!("{:?}", wme)));
-        trace!(log, "add wme");
+        trace!(?wme, "add wme");
 
-        observe!(
-            log,
-            Trace::AddedWme {
-                id: wme.0[0],
-                attribute: wme.0[1],
-                value: wme.0[2],
-            }
-        );
+        observe!(Trace::AddedWme {
+            id: wme.0[0],
+            attribute: wme.0[1],
+            value: wme.0[2],
+        });
 
         #[rustfmt::skip]
         let tests = [
@@ -220,8 +211,8 @@ impl Rete {
             };
             let alpha_memory = self.alpha_network.get_mut(alpha_memory_id).unwrap();
 
-            let log = log.new(o!("alpha" => alpha_memory.id.0));
-            trace!(log, "matched");
+            let _span = info_span!("test", alpha_memory = alpha_memory_id.0).entered();
+            trace!("matched");
 
             // Activate alpha memory
             alpha_memory.wmes.push(wme);
@@ -238,7 +229,7 @@ impl Rete {
             }
         }
 
-        self.activate_memories(log);
+        self.activate_memories();
     }
 
     /// Remove a WME from working memory.
@@ -251,8 +242,7 @@ impl Rete {
     /// rete.remove_wme(wme);
     /// ```
     pub fn remove_wme(&mut self, wme: Wme) {
-        let log = self.log.new(o!("wme" => format!("{:?}", wme)));
-        trace!(log, "remove wme");
+        trace!(?wme, "remove wme");
 
         let alpha_memories = self
             .wme_alpha_memories
@@ -276,14 +266,11 @@ impl Rete {
             }
         }
 
-        observe!(
-            log,
-            Trace::RemovedWme {
-                id: wme.0[0],
-                attribute: wme.0[1],
-                value: wme.0[2]
-            }
-        );
+        observe!(Trace::RemovedWme {
+            id: wme.0[0],
+            attribute: wme.0[1],
+            value: wme.0[2]
+        });
     }
 
     /// Add a production to the rete. No reordering of conitions is performed.
@@ -314,11 +301,10 @@ impl Rete {
     /// assert_eq!(rete.take_events(), vec![Event::Fired(ProductionID(0))]);
     /// ```
     pub fn add_production(&mut self, production: Production) {
-        let log = self.log.new(o!("production_id" => production.id.0));
-        trace!(log, "add production"; "production" => ?production);
+        trace!(?production, "add production");
 
         if production.conditions.is_empty() {
-            error!(log, "production has no conditions");
+            error!("production has no conditions");
             return;
         }
 
@@ -326,7 +312,7 @@ impl Rete {
 
         for i in 0..production.conditions.len() {
             let condition = production.conditions[i];
-            trace!(log, "add condition"; "condition" => ?condition);
+            trace!(?condition, "add condition");
 
             // get join tests from condition
             // NOTE: This does not handle intra-condition tests.
@@ -381,25 +367,19 @@ impl Rete {
                     successors: vec![],
                     test: alpha_test,
                 };
-                trace!(log, "created alpha memory";
-                    "test" => %alpha_test,
-                    "id" => ?memory.id,
-                    "wmes" => memory.wmes.len());
+                trace!(%alpha_test, id = memory.id.0, wmes = memory.wmes.len(), "created alpha memory");
 
                 self.alpha_tests.insert(alpha_test, memory.id);
                 self.alpha_network.insert(memory.id, memory);
 
-                observe!(
-                    log,
-                    Trace::AddedAlphaMemory {
-                        id: alpha_memory_id.0,
-                        test: trace::AlphaMemoryTest {
-                            id: alpha_test.0[0],
-                            attribute: alpha_test.0[1],
-                            value: alpha_test.0[2],
-                        }
+                observe!(Trace::AddedAlphaMemory {
+                    id: alpha_memory_id.0,
+                    test: trace::AlphaMemoryTest {
+                        id: alpha_test.0[0],
+                        attribute: alpha_test.0[1],
+                        value: alpha_test.0[2],
                     }
-                );
+                });
             }
             let alpha_memory = &self.alpha_network[&alpha_memory_id];
 
@@ -423,18 +403,15 @@ impl Rete {
                     };
                     let id = self.beta_network.add_node(new_node);
                     self.beta_network.add_edge(current_node_id, id, ());
-                    trace!(log, "create join node"; "id" => ?id);
+                    trace!(?id, "create join node");
 
-                    observe!(
-                        log,
-                        Trace::AddedNode {
-                            id: id.index(),
-                            parent_id: current_node_id.index(),
-                            kind: trace::NodeKind::Join,
-                            children: vec![],
-                            alpha_node_id: Some(alpha_memory_id.0),
-                        }
-                    );
+                    observe!(Trace::AddedNode {
+                        id: id.index(),
+                        parent_id: current_node_id.index(),
+                        kind: trace::NodeKind::Join,
+                        children: vec![],
+                        alpha_node_id: Some(alpha_memory_id.0),
+                    });
 
                     // link to alpha memory
                     self.alpha_network
@@ -459,20 +436,17 @@ impl Rete {
                         let new_node = ReteNode::Beta { tokens: vec![] };
                         let id = self.beta_network.add_node(new_node);
                         self.beta_network.add_edge(current_node_id, id, ());
-                        trace!(log, "create beta memory"; "id" => ?id);
+                        trace!(?id, "create beta memory");
 
-                        observe!(
-                            log,
-                            Trace::AddedNode {
-                                id: id.index(),
-                                parent_id: current_node_id.index(),
-                                kind: trace::NodeKind::Beta,
-                                children: vec![],
-                                alpha_node_id: None,
-                            }
-                        );
+                        observe!(Trace::AddedNode {
+                            id: id.index(),
+                            parent_id: current_node_id.index(),
+                            kind: trace::NodeKind::Beta,
+                            children: vec![],
+                            alpha_node_id: None,
+                        });
 
-                        self.activate_new_node(log.clone(), current_node_id, id);
+                        self.activate_new_node(current_node_id, id);
 
                         id
                     })
@@ -487,32 +461,26 @@ impl Rete {
             activations: vec![],
         };
         let id = self.beta_network.add_node(new_node);
-        trace!(log, "create p node"; "id" => ?id);
+        trace!(?id, "create p node");
         self.beta_network.add_edge(current_node_id, id, ());
         self.productions.insert(production.id, id);
-        trace!(log, "new p node"; "id" => ?id);
+        trace!(?id, "new p node");
 
-        observe!(
-            log,
-            Trace::AddedNode {
-                id: id.index(),
-                parent_id: current_node_id.index(),
-                kind: trace::NodeKind::P,
-                children: vec![],
-                alpha_node_id: None,
-            }
-        );
+        observe!(Trace::AddedNode {
+            id: id.index(),
+            parent_id: current_node_id.index(),
+            kind: trace::NodeKind::P,
+            children: vec![],
+            alpha_node_id: None,
+        });
 
-        observe!(
-            log,
-            Trace::AddedProduction {
-                id: production.id.0,
-                p_node_id: id.index(),
-            }
-        );
+        observe!(Trace::AddedProduction {
+            id: production.id.0,
+            p_node_id: id.index(),
+        });
 
         if current_node_id != self.dummy_node_id {
-            self.activate_new_node(log.clone(), current_node_id, id);
+            self.activate_new_node(current_node_id, id);
         }
     }
 
@@ -538,8 +506,8 @@ impl Rete {
     /// assert_eq!(rete.take_events(), vec![Event::Retracted(ProductionID(0))]);
     /// ```
     pub fn remove_production(&mut self, id: ProductionID) {
-        let log = self.log.new(o!("production" => id.0));
-        trace!(log, "remove production");
+        let _span = info_span!("remove_production", id = id.0).entered();
+        trace!("remove production");
 
         let mut current_node_id = match self.productions.remove(&id) {
             Some(id) => id,
@@ -549,18 +517,15 @@ impl Rete {
         while current_node_id != self.dummy_node_id
             && self.beta_network.neighbors(current_node_id).count() == 0
         {
-            let log = log.new(o!("node" => current_node_id.index()));
+            let _span = info_span!("node", id = current_node_id.index()).entered();
             match self.beta_network[current_node_id] {
                 ReteNode::Beta { ref tokens } => {
                     for token_id in tokens {
                         self.tokens.remove_node(*token_id);
-                        trace!(log, "remove token"; "token" => token_id.index());
-                        observe!(
-                            log,
-                            Trace::RemovedToken {
-                                id: token_id.index()
-                            }
-                        );
+                        trace!(token = token_id.index(), "remove token");
+                        observe!(Trace::RemovedToken {
+                            id: token_id.index()
+                        });
                     }
                 }
                 ReteNode::Join { alpha_memory, .. } => {
@@ -579,8 +544,8 @@ impl Rete {
                     if alpha_node.get().successors.is_empty() {
                         let memory = alpha_node.remove();
                         self.alpha_tests.remove(&memory.test);
-                        trace!(log, "remove alpha memory"; "alpha memory" => alpha_memory.0);
-                        observe!(log, Trace::RemovedAlphaMemory { id: alpha_memory.0 });
+                        trace!(id = alpha_memory.0, "remove alpha memory");
+                        observe!(Trace::RemovedAlphaMemory { id: alpha_memory.0 });
                     }
                 }
                 ReteNode::P {
@@ -588,22 +553,16 @@ impl Rete {
                 } => {
                     for token_id in activations {
                         self.tokens.remove_node(*token_id);
-                        trace!(log, "remove token"; "token" => token_id.index());
-                        observe!(
-                            log,
-                            Trace::RemovedToken {
-                                id: token_id.index()
-                            }
-                        );
+                        trace!(token = token_id.index(), "remove token");
+                        observe!(Trace::RemovedToken {
+                            id: token_id.index()
+                        });
 
                         self.events.push(Event::Retracted(id));
-                        observe!(
-                            log,
-                            Trace::UnmatchedProduction {
-                                id: id.0,
-                                token: token_id.index(),
-                            }
-                        );
+                        observe!(Trace::UnmatchedProduction {
+                            id: id.0,
+                            token: token_id.index(),
+                        });
                     }
                 }
             }
@@ -615,20 +574,17 @@ impl Rete {
                 .expect("Node should have a parent");
             self.beta_network.remove_node(current_node_id);
 
-            trace!(log, "remove node");
-            observe!(
-                log,
-                Trace::RemovedNode {
-                    id: current_node_id.index()
-                }
-            );
+            trace!("remove node");
+            observe!(Trace::RemovedNode {
+                id: current_node_id.index()
+            });
 
             current_node_id = parent;
         }
 
         self.productions.remove(&id);
 
-        observe!(log, Trace::RemovedProduction { id: id.0 });
+        observe!(Trace::RemovedProduction { id: id.0 });
     }
 
     /// Consume the list of events that have fired since the last this
@@ -639,14 +595,13 @@ impl Rete {
         events
     }
 
-    fn activate_new_node(&mut self, log: Logger, parent: NodeIndex, new_node: NodeIndex) {
-        let log = log.new(o!("new node" => new_node.index()));
-        trace!(log, "activate new node");
+    fn activate_new_node(&mut self, parent: NodeIndex, new_node: NodeIndex) {
+        let _span = info_span!("activate_new_node", id = new_node.index()).entered();
         match self.beta_network[parent] {
             ReteNode::Beta { .. } => unimplemented!(),
 
             ReteNode::Join { alpha_memory, .. } => {
-                trace!(log, "parent is a join node");
+                trace!("parent is a join node");
                 let children: Vec<_> = self.beta_network.neighbors(parent).collect();
                 for child in &children {
                     if let Some(edge) = self.beta_network.find_edge(parent, *child) {
@@ -660,7 +615,7 @@ impl Rete {
                         kind: ActivationKind::Right(*wme),
                     });
                 }
-                self.activate_memories(log);
+                self.activate_memories();
                 for child in children {
                     self.beta_network.update_edge(parent, child, ());
                 }
@@ -670,12 +625,12 @@ impl Rete {
         }
     }
 
-    fn activate_memories(&mut self, log: Logger) {
-        trace!(log, "activate memories");
+    fn activate_memories(&mut self) {
+        trace!("activate memories");
         while let Some(activation) = self.pending_activations.pop() {
-            let log = log.new(o!("activation" => format!("{:?}", activation)));
+            let _span = info_span!("activation", ?activation).entered();
             let node = &self.beta_network[activation.node];
-            trace!(log, "activating"; "remaining" => self.pending_activations.len());
+            trace!(remaining = self.pending_activations.len(), "activating");
             let mut new_tokens = vec![];
             match (&activation.kind, &node) {
                 (ActivationKind::Left(wme, token), ReteNode::Beta { .. }) => {
@@ -683,17 +638,14 @@ impl Rete {
                         wme: *wme,
                         node: activation.node,
                     };
-                    trace!(log, "new token"; "token" => ?new_token);
+                    trace!(?new_token, "new token");
                     let new_token_id = self.tokens.add_node(new_token);
                     self.tokens.add_edge(new_token_id, *token, ());
-                    observe!(
-                        log,
-                        Trace::AddedToken {
-                            id: new_token_id.index(),
-                            node_id: new_token.node.index(),
-                            parent_id: token.index(),
-                        }
-                    );
+                    observe!(Trace::AddedToken {
+                        id: new_token_id.index(),
+                        node_id: new_token.node.index(),
+                        parent_id: token.index(),
+                    });
                     new_tokens.push(new_token_id);
                     self.wme_tokens.get_mut(wme).unwrap().push(new_token_id);
                     let new_activations: Vec<_> = self
@@ -704,7 +656,7 @@ impl Rete {
                             kind: ActivationKind::Left(*wme, new_token_id),
                         })
                         .collect();
-                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    trace!("enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
 
@@ -730,7 +682,7 @@ impl Rete {
                         })
                         .collect();
 
-                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    trace!("enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
 
@@ -739,21 +691,18 @@ impl Rete {
                         wme: *wme,
                         node: activation.node,
                     };
-                    trace!(log, "new token"; "token" => ?new_token);
+                    trace!(?new_token, "new token");
                     let new_token_id = self.tokens.add_node(new_token);
                     self.tokens.add_edge(new_token_id, *token, ());
-                    observe!(
-                        log,
-                        Trace::AddedToken {
-                            id: new_token_id.index(),
-                            node_id: new_token.node.index(),
-                            parent_id: token.index()
-                        }
-                    );
+                    observe!(Trace::AddedToken {
+                        id: new_token_id.index(),
+                        node_id: new_token.node.index(),
+                        parent_id: token.index()
+                    });
                     new_tokens.push(new_token_id);
                     self.wme_tokens.get_mut(wme).unwrap().push(new_token_id);
 
-                    info!(log, "Activated P node"; "production" => ?production);
+                    info!(?production, "Activated P node");
                 }
 
                 (ActivationKind::Right(_), ReteNode::Beta { .. }) => {
@@ -772,12 +721,17 @@ impl Rete {
                         .neighbors_directed(activation.node, Direction::Incoming)
                         .next()
                         .unwrap();
-                    let log = log.new(o!("alpha" => alpha_memory.0, "beta" => beta_node.index()));
+                    let _span = info_span!(
+                        "right activate",
+                        alpha = alpha_memory.0,
+                        beta = beta_node.index()
+                    )
+                    .entered();
                     let tokens = match self.beta_network[beta_node] {
                         ReteNode::Beta { ref tokens } => tokens,
                         _ => unreachable!("parent of a join node should be a beta node"),
                     };
-                    trace!(log, "scanning {} tokens", tokens.len());
+                    trace!("scanning {} tokens", tokens.len());
                     let new_activations: Vec<_> = tokens
                         .iter()
                         .filter(|token| {
@@ -793,7 +747,7 @@ impl Rete {
                         })
                         .collect();
 
-                    trace!(log, "enqueing {} new activations", new_activations.len());
+                    trace!("enqueing {} new activations", new_activations.len());
                     self.pending_activations.extend(new_activations);
                 }
 
@@ -811,13 +765,10 @@ impl Rete {
                     } => {
                         activations.insert(0, new_token);
                         self.events.push(Event::Fired(*production));
-                        observe!(
-                            log,
-                            Trace::MatchedProduction {
-                                id: production.0,
-                                token: new_token.index(),
-                            }
-                        );
+                        observe!(Trace::MatchedProduction {
+                            id: production.0,
+                            token: new_token.index(),
+                        });
                     }
                     _ => unreachable!("tokens can only be stored in beta or p nodes"),
                 }
@@ -1065,27 +1016,9 @@ impl From<ConditionTest> for Option<SymbolID> {
 mod tests {
     use super::*;
 
-    fn init() -> slog::Logger {
-        color_backtrace::install();
-
-        #[cfg(not(feature = "trace"))]
-        let drain = {
-            let decorator = slog_term::TermDecorator::new().build();
-            slog_term::CompactFormat::new(decorator).build().fuse()
-        };
-
-        #[cfg(feature = "trace")]
-        let drain = trace::ObserverDrain::new(|msg| println!("{:?}", msg));
-
-        let drain = std::sync::Mutex::new(drain).fuse();
-        let log = slog::Logger::root(drain, o! {});
-
-        log
-    }
-
     #[test]
     fn empty_rete() {
-        let rete = Rete::new(None);
+        let rete = Rete::new();
         assert_eq!(rete.alpha_network.len(), 0);
         assert_eq!(rete.beta_network.node_count(), 1); // dummy top node.
     }
@@ -1184,9 +1117,7 @@ mod tests {
 
         #[test]
         fn add_productions_and_wmes() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
             for p in productions() {
                 rete.add_production(p);
             }
@@ -1205,9 +1136,7 @@ mod tests {
 
         #[test]
         fn add_wmes_then_productions() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
             for wme in wmes() {
                 rete.add_wme(wme);
             }
@@ -1232,9 +1161,7 @@ mod tests {
 
         #[test]
         fn add_and_remove_wmes() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
             for wme in wmes() {
                 rete.add_wme(wme);
             }
@@ -1248,9 +1175,7 @@ mod tests {
 
         #[test]
         fn remove_productions() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
 
             for p in productions() {
                 rete.add_production(p);
@@ -1266,9 +1191,7 @@ mod tests {
 
         #[test]
         fn remove_productions_with_wmes() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
 
             for p in productions() {
                 rete.add_production(p);
@@ -1292,9 +1215,7 @@ mod tests {
 
         #[test]
         fn alpha_tests_cleared() {
-            let log = init();
-
-            let mut rete = Rete::new(log);
+            let mut rete = Rete::new();
 
             for p in productions() {
                 rete.add_production(p);
